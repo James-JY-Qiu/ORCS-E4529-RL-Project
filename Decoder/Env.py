@@ -308,7 +308,6 @@ class BatchVRPEnvs:
             finally:
                 # 确保在手动中断后关闭进程池
                 executor.shutdown(wait=True)
-                print("进程池已关闭")
         else:
             for env in self.envs:
                 env.reset()

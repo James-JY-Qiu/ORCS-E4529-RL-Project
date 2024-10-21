@@ -338,18 +338,45 @@ if __name__ == '__main__':
         lr=lr  # 设置学习率
     )
 
-    # training
-    train_model(
-        env_params=('small', small_params, num_samll_instances),
-        env_generator=BatchVRPEnvs,
-        encoder=encoder,
-        baseline_encoder=baseline_encoder,
-        action_selector=action_selector,
-        baseline_action_selector=baseline_action_selector,
-        optimizer=optimizer,
-        epochs=epochs,
-        device=device,
-        max_workers=max_workers,
-        record_gradient=record_gradient,
-        reward_window_size=reward_window_size
-    )
+    try:
+        # training
+        train_model(
+            env_params=('small', small_params, num_samll_instances),
+            env_generator=BatchVRPEnvs,
+            encoder=encoder,
+            baseline_encoder=baseline_encoder,
+            action_selector=action_selector,
+            baseline_action_selector=baseline_action_selector,
+            optimizer=optimizer,
+            epochs=epochs,
+            device=device,
+            max_workers=max_workers,
+            record_gradient=record_gradient,
+            reward_window_size=reward_window_size
+        )
+    except Exception:
+        # 捕获手动中断，进行清理操作
+        print("训练过程中检测到异常，正在清理资源并关闭...")
+        # 清理深度学习相关资源，例如释放GPU显存
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()  # 释放GPU缓存
+    finally:
+        # 最后保障措施，确保资源释放
+        print("所有资源清理完成。训练已中止。")
+        # 保存模型 (假设你有4个模型)
+        current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        try:
+            torch.save(encoder.state_dict(), f'models/encoder_{current_time}.pth')
+            torch.save(baseline_encoder.state_dict(), f'models/baseline_encoder_{current_time}.pth')
+            torch.save(action_selector.state_dict(), f'models/action_selector_{current_time}.pth')
+            torch.save(baseline_action_selector.state_dict(), f'models/baseline_action_selector_{current_time}.pth')
+            print("模型已成功保存。")
+        except Exception as e:
+            print(f"保存模型时出错: {e}")
+
+        try:
+            # 确保 wandb 会话关闭
+            wandb.finish()
+        except Exception as e:
+            print(f"finally 中结束 wandb 时出错: {e}")
+        print("资源已完全清理。")

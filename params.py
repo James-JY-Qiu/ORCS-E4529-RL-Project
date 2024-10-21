@@ -42,7 +42,7 @@ lr = 1e-4
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # number of instances
-num_samll_instances = 1280000 * 2
+num_samll_instances = 1280000
 num_medium_instances = 640000
 num_large_instances = 640000
 
