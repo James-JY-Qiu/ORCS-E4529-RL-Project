@@ -21,13 +21,13 @@ out_feats = 128
 MultiLayerEdgeGATParams = {
     'in_feats': 11,
     'edge_feats': 10,
-    'hidden_feats': 16,
+    'units': 128,
     'num_heads': 8,
-    'out_feats': out_feats,
     'num_layers': 3,
     'feat_drop': 0.0,
     'attn_drop': 0.0,
-    'activation': F.elu
+    'edge_drop': 0.0,
+    'activation': F.silu
 }
 embedding_dim = out_feats
 # --------- decoder -----------

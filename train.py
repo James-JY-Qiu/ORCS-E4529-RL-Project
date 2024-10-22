@@ -140,10 +140,6 @@ def replace_baseline_model(baseline_model, current_model):
     with torch.no_grad():
         baseline_model.load_state_dict(current_model.state_dict())
 
-    # 再次确保 baseline_model 的所有参数的 requires_grad 为 False
-    for param in baseline_model.parameters():
-        param.requires_grad = False
-
 
 def record_gradieents(encoder, action_selector):
     # 记录梯度
