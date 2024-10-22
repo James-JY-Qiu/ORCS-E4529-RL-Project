@@ -20,7 +20,7 @@ MultiLayerEdgeGATParams = {
     'hidden_feats': 16,
     'num_heads': 8,
     'out_feats': out_feats,
-    'num_layers': 3,
+    'num_layers': 2,
     'feat_drop': 0.0,
     'attn_drop': 0.0,
     'activation': F.elu
@@ -29,14 +29,13 @@ embedding_dim = out_feats
 # --------- decoder -----------
 
 # action
-action_heads = 10
-action_extra_embedding_dims = 2
+action_heads = 8
 
 # train
 epochs = 100
 
 # optimizer
-lr = 1e-4
+lr = 5e-5
 
 # device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

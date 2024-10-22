@@ -328,17 +328,9 @@ class BatchVRPEnvs:
         Returns:
             batch_status: 当前 batch 的状态
         """
-        batch_remaining_capacities = [env.remaining_capacities for env in self.envs]
-        batch_time_elapsed = [env.time_elapsed for env in self.envs]
         batch_vehicle_positions = [env.vehicle_positions for env in self.envs]
-        batch_current_customer_demands = np.array([env.current_customer_demands for env in self.envs])
-        batch_customer_time_windows = np.array([env.customer_time_windows for env in self.envs])
         return {
-            'batch_remaining_capacities': batch_remaining_capacities,
-            'batch_time_elapsed': batch_time_elapsed,
-            'batch_vehicle_positions': batch_vehicle_positions,
-            'batch_current_customer_demands': batch_current_customer_demands,
-            'batch_customer_time_windows': batch_customer_time_windows,
+            'batch_vehicle_positions': np.array(batch_vehicle_positions)
         }
 
 

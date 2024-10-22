@@ -13,7 +13,7 @@ from Decoder import BatchVRPEnvs
 from Action import ActionSelector
 
 from params import project_name, max_workers, device
-from params import embedding_dim, action_extra_embedding_dims, action_heads
+from params import embedding_dim, action_heads
 from params import epochs, lr
 from params import small_params, num_samll_instances
 from params import MultiLayerEdgeGATParams
@@ -321,7 +321,7 @@ if __name__ == '__main__':
 
     # action selector
     action_selector = ActionSelector(
-        embedding_dim=embedding_dim + action_extra_embedding_dims,
+        embedding_dim=embedding_dim,
         heads=action_heads
     )
     action_selector.to(device)

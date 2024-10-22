@@ -17,9 +17,8 @@ class ActionSelector(nn.Module):
         self.embedding_dim = embedding_dim
         self.heads = heads
 
-        # 多头注意力层，用于计算新的上下文嵌入矩阵和顾客矩阵的多头注意力机制
+        # 多头注意力层，用于计算新的上下文嵌入矩阵的多头注意力机制
         self.mha_vehicles = nn.MultiheadAttention(embed_dim=embedding_dim, num_heads=heads, batch_first=True)
-        self.mha_customers = nn.MultiheadAttention(embed_dim=embedding_dim, num_heads=heads, batch_first=True)
 
         # 查询权重矩阵 W_Q 和 键权重矩阵 W_K
         self.W_Q = nn.Linear(embedding_dim, embedding_dim)
@@ -47,27 +46,12 @@ class ActionSelector(nn.Module):
         )
         return attn_output  # (batch_size, M+1, embedding_dim)
 
-    def compute_batch_customer_attention(self, batch_customer_status_embeddings):
-        """
-        使用多头注意力机制计算新的顾客当前状态嵌入矩阵
-        Args:
-            batch_customer_status_embeddings: 顾客当前状态嵌入矩阵 (batch_size, N, embedding_dim)
-        Returns:
-           new_batch_customer_status_embeddings: 经过多头注意力机制后的顾客当前状态嵌入矩阵
-        """
-        attn_output, _ = self.mha_customers(
-            batch_customer_status_embeddings,
-            batch_customer_status_embeddings,
-            batch_customer_status_embeddings
-        )
-        return attn_output  # (batch_size, N, embedding_dim)
-
-    def compute_batch_compatibility(self, new_batch_vehicle_status_embeddings, new_batch_customer_status_embeddings):
+    def compute_batch_compatibility(self, new_batch_vehicle_status_embeddings, batch_customer_status_embeddings):
         """
         计算每个客户与车辆的兼容性分数
         Args:
             new_batch_vehicle_status_embeddings: 经过多头注意力机制后的车辆当前状态嵌入矩阵 (batch_size, M+1, embedding_dim)
-            new_batch_customer_status_embeddings: 经过多头注意力机制后的顾客当前状态嵌入矩阵 (batch_size, N, embedding_dim)
+            batch_customer_status_embeddings: 顾客的嵌入矩阵 (batch_size, N, embedding_dim)
         Returns:
             compatibility_scores: 兼容性分数 (batch_size, M, N)
         """
@@ -76,7 +60,7 @@ class ActionSelector(nn.Module):
         # 计算查询向量 q_c
         q_c = self.W_Q(vehicle_context_embedding)  # (batch_size, M, embedding_dim)
         # 计算键向量 k_i
-        k = self.W_K(new_batch_customer_status_embeddings)  # (batch_size, N, embedding_dim)
+        k = self.W_K(batch_customer_status_embeddings)  # (batch_size, N, embedding_dim)
 
         # 使用 q_c 和 k 计算兼容性 u_{i,m,t}
         # 使用 einsum 来计算兼容性分数，等效于 torch.matmul(q_c, k.transpose(-1, -2))
@@ -155,15 +139,12 @@ class ActionSelector(nn.Module):
             selected_actions: 选择的客户索引 (batch_size, M)
             log_probs: 对数概率 (在sampling模式下) (batch_size, M)
         """
-        # 1.1 使用多头注意力机制计算 new_batch_context_embedding
+        # 1 使用多头注意力机制计算 new_batch_context_embedding
         new_batch_vehicle_status_embeddings = self.compute_batch_vehicle_attention(batch_vehicle_status_embeddings)
-
-        # 1.2 使用多头注意力机制计算 new_batch_customer_embeddings
-        new_batch_customer_status_embeddings = self.compute_batch_customer_attention(batch_customer_status_embeddings)
 
         # 2. 计算兼容性分数
         compatibility_scores = self.compute_batch_compatibility(
-            new_batch_vehicle_status_embeddings, new_batch_customer_status_embeddings
+            new_batch_vehicle_status_embeddings, batch_customer_status_embeddings
         )
 
         # 3. 对已访问和容量不足的客户进行掩码处理

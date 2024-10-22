@@ -1,4 +1,5 @@
 import dgl
+import numpy as np
 import torch
 from torch import nn
 
@@ -118,97 +119,28 @@ class Encoder(nn.Module):
 
     def get_current_batch_state(
             self,
-            batch_remaining_capacities,
-            batch_time_elapsed,
             batch_vehicle_positions,
-            batch_current_customer_demands,
-            batch_customer_time_windows
     ):
         """
         获取batch中所有instances的所有车辆和客户的当前状态
         Args:
-            batch_remaining_capacities: 每辆车的剩余容量
-            batch_time_elapsed: 每辆车的经过时间
             batch_vehicle_positions: 车辆的位置
-            batch_current_customer_demands: 当前客户的需求
-            batch_customer_time_windows: 客户的时间窗
         Returns:
             current_state: 当前的状态，包括每辆车和未完成客户的信息
         """
-        batch_size = len(batch_remaining_capacities)
-        tensor_dtype = self.batch_global_embedding.dtype
-
-        batch_remaining_capacities_tensor_list = [
-            torch.tensor(arr, dtype=tensor_dtype, device=self.device)
-            for arr in batch_remaining_capacities
-        ]
-        batch_remaining_capacities_tensor = torch.nn.utils.rnn.pad_sequence(
-            batch_remaining_capacities_tensor_list, batch_first=True, padding_value=0.0
+        batch_vehicle_positions_tensor = torch.tensor(
+            batch_vehicle_positions, dtype=torch.int64, device=self.device
         )
-
-        batch_time_elapsed_tensor_list = [
-            torch.tensor(arr, dtype=tensor_dtype, device=self.device)
-            for arr in batch_time_elapsed
-        ]
-        batch_time_elapsed_tensor = torch.nn.utils.rnn.pad_sequence(
-            batch_time_elapsed_tensor_list, batch_first=True, padding_value=0.0
-        )
-
-        batch_vehicle_positions_tensor_list = [
-            torch.tensor(arr, dtype=torch.int64, device=self.device)
-            for arr in batch_vehicle_positions
-        ]
-        batch_vehicle_positions_tensor = torch.nn.utils.rnn.pad_sequence(
-            batch_vehicle_positions_tensor_list, batch_first=True, padding_value=0
-        )
-
-        # (1) (batch_size, 1 + M, embedding_dims + 2)
-        # 1.1 Global embedding part: shape (batch_size, 1, embedding_dims + 2)
-        global_remaining_capacity = batch_remaining_capacities_tensor.sum(dim=1, keepdim=True)  # shape (batch_size, 1)
-        global_time_elapsed = batch_time_elapsed_tensor.mean(dim=1, keepdim=True)  # shape (batch_size, 1)
-        global_context = torch.cat((global_remaining_capacity, global_time_elapsed), dim=1)  # shape (batch_size, 2)
-        global_embedding = torch.cat((
-            self.batch_global_embedding.unsqueeze(1), global_context.unsqueeze(1)
-        ), dim=2)  # shape (batch_size, 1, embedding_dims + 2)
-
-        # 1.2 Vehicles embedding part: shape (batch_size, num_vehicles, embedding_dims + 2)
+        # State Embedding (batch_size, 1 + M, embedding_dims)
+        # 1.1 Vehicles embedding part (batch_size, M, embedding_dims)
         vehicle_node_embeddings = torch.gather(
             self.batch_encode_node_features,
             1,
             batch_vehicle_positions_tensor.unsqueeze(-1).expand(-1, -1, self.batch_encode_node_features.size(-1))
-        )  # shape (batch_size, num_vehicles, embedding_dims)
-        vehicle_context = torch.cat((
-            batch_remaining_capacities_tensor.unsqueeze(-1), batch_time_elapsed_tensor.unsqueeze(-1)
-        ), dim=2)  # shape (batch_size, num_vehicles, 2)
-        vehicle_embeddings = torch.cat((
-            vehicle_node_embeddings, vehicle_context
-        ), dim=2)  # shape (batch_size, num_vehicles, embedding_dims + 2)
-
-        # Combine global and vehicles embeddings: shape (batch_size, 1 + num_vehicles, embedding_dims + 2)
+        )
+        # 1.2 Combine global and vehicles embeddings: shape (batch_size, 1 + M, embedding_dims)
         current_vehicle_embeddings = torch.cat((
-            global_embedding, vehicle_embeddings
+            self.batch_global_embedding.unsqueeze(1), vehicle_node_embeddings
         ), dim=1)
 
-        # (2) (batch_size, N, embedding_dims + 2)
-        # Customer positions embeddings
-        customer_demands = torch.tensor(
-            batch_current_customer_demands, dtype=tensor_dtype, device=self.device
-        ).unsqueeze(-1)  # shape (batch_size, num_positions, 1)
-        customer_time_windows_start = torch.tensor(
-            batch_customer_time_windows[:, :, 0], dtype=tensor_dtype, device=self.device
-        ).unsqueeze(-1)  # shape (batch_size, num_positions, 1)
-        customer_context = torch.cat((
-            customer_demands, customer_time_windows_start
-        ), dim=2)  # shape (batch_size, num_customers, 2)
-        wait_time_node_context = torch.zeros(
-            batch_size, self.num_wait_time_dummy_node, 2,
-            dtype=tensor_dtype, device=self.device
-        )  # shape (batch_size, num_wait_dummy_nodes, 2)
-        customer_new_context = torch.cat((
-            customer_context, wait_time_node_context
-        ), dim=1)  # shape (batch_size, num_positions, 2)
-        current_customer_embeddings = torch.cat((
-            self.batch_encode_node_features, customer_new_context
-        ), dim=2)  # shape (batch_size, num_positions, embedding_dims + 2)
-
-        return current_vehicle_embeddings, current_customer_embeddings
+        return current_vehicle_embeddings, self.batch_encode_node_features
