@@ -8,6 +8,10 @@ max_workers = 8
 # --------------------- Wandb ---------------------
 project_name = 'EdgeGAT-CVRPSTW'
 
+# --------------------- Graph Parameters ---------------------
+k_distance_nearest_neighbors = 5
+k_time_nearest_neighbors = 5
+
 
 # --------------------- Hyperparameters ---------------------
 # --------- encoder -----------
@@ -20,7 +24,7 @@ MultiLayerEdgeGATParams = {
     'hidden_feats': 16,
     'num_heads': 8,
     'out_feats': out_feats,
-    'num_layers': 2,
+    'num_layers': 3,
     'feat_drop': 0.0,
     'attn_drop': 0.0,
     'activation': F.elu

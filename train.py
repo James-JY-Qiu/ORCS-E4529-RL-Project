@@ -16,7 +16,7 @@ from params import project_name, max_workers, device
 from params import embedding_dim, action_heads
 from params import epochs, lr
 from params import small_params, num_samll_instances
-from params import MultiLayerEdgeGATParams
+from params import MultiLayerEdgeGATParams, k_distance_nearest_neighbors, k_distance_nearest_neighbors
 from params import record_gradient, reward_window_size
 
 import wandb
@@ -309,6 +309,8 @@ if __name__ == '__main__':
     encoder = Encoder(
         encoder_model=MultiLayerEdgeGAT,
         encoder_params=MultiLayerEdgeGATParams,
+        k_distance_nearest_neighbors=k_distance_nearest_neighbors,
+        k_time_nearest_neighbors=k_distance_nearest_neighbors,
         device=device
     )
     encoder.to(device)

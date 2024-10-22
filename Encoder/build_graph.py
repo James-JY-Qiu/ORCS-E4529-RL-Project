@@ -1,10 +1,45 @@
+import pandas as pd
 import torch
 import dgl
 import numpy as np
 from scipy.spatial.distance import cdist
 
 
-def build_graph(df_customers, depot):
+def find_k_dist_nodes(similarity_matrix, num_customers, k):
+    # 将自己到自己的距离设为无穷大，避免选择自己
+    np.fill_diagonal(similarity_matrix, np.inf)
+
+    # 对于第 [1:1+num_customers] 的节点，找到 [1:1+num_customers] 中距离它最近的 k 个节点（不包括它自身）
+    sub_matrix_customers = similarity_matrix[1:1 + num_customers, 1:1 + num_customers]
+    # 对每一行进行排序并取最近的 k 个
+    nearest_customers_indices = np.argsort(sub_matrix_customers, axis=1)[:, :k]
+
+    # 对于第 [1+num_customers:] 的节点，找到 [1:1+num_customers] 中距离它最近的 k 个节点
+    sub_matrix_depots_to_customers = similarity_matrix[1 + num_customers:, 1:1 + num_customers]
+    # 对每一行进行排序并取最近的 k 个
+    nearest_depots_indices = np.argsort(sub_matrix_depots_to_customers, axis=1)[:, :k]
+
+    return nearest_customers_indices+1, nearest_depots_indices+1
+
+
+def build_graph(df_customers, company_data, wait_times, k_distance, k_time):
+    depot = company_data['depot']
+    num_customers = company_data['Num_Customers']
+    # 添加等待时间节点
+    num_wait_time_dummy_node = len(wait_times)
+    df_customers_wait_time = pd.DataFrame({
+        'X': np.full(num_wait_time_dummy_node, depot[0][0]),
+        'Y': np.full(num_wait_time_dummy_node, depot[0][1]),
+        'Demand': np.zeros(num_wait_time_dummy_node),
+        'Start_Time_Window': np.zeros(num_wait_time_dummy_node),
+        'End_Time_Window': np.full(num_wait_time_dummy_node, company_data['Max_Time']),
+        'Alpha': np.zeros(num_wait_time_dummy_node),
+        'Beta': np.zeros(num_wait_time_dummy_node),
+        'Service_Time': wait_times,
+        'Is_customer': 0
+    })
+    df_customers = pd.concat([df_customers, df_customers_wait_time], ignore_index=True)
+
     # 计算时间窗口的长度
     df_customers['Window_length'] = df_customers['End_Time_Window'] - df_customers['Start_Time_Window']
 
@@ -14,19 +49,25 @@ def build_graph(df_customers, depot):
 
     # 构建节点特征矩阵
     node_features = df_customers[
-        ['X', 'Y', 'Demand', 'Start_Time_Window', 'End_Time_Window', 'Window_length', 'Is_customer', 'Alpha', 'Beta',
-         'Service_Time', 'Polar_angle']].values
+        ['X', 'Y', 'Demand', 'Start_Time_Window', 'End_Time_Window', 'Window_length', 'Is_customer', 'Alpha', 'Beta', 'Service_Time', 'Polar_angle']
+    ].values
     node_features_tensor = torch.tensor(node_features, dtype=torch.float32)
 
     # 构建图
-    g = dgl.knn_graph(node_features_tensor[:, :2], k=node_features_tensor.shape[0] - 1)
+    g = dgl.graph(([], []))  # 创建一个空图
 
-    # 添加节点特征
+    # 添加节点以及节点特征
+    g.add_nodes(node_features.shape[0])
     g.ndata['features'] = node_features_tensor
 
     # 构建欧几里得距离矩阵
     positions = df_customers[['X', 'Y']].values
     distance_matrix = cdist(positions, positions, metric='euclidean')
+
+    # 根据距离矩阵计算最近邻节点
+    nearest_dist_customer_to_customer, nearest_dist_depot_to_customer = find_k_dist_nodes(
+        distance_matrix, num_customers, k_distance
+    )
 
     # 计算最早和最晚服务时间矩阵
     start_time = df_customers['Start_Time_Window'].values
@@ -40,6 +81,31 @@ def build_graph(df_customers, depot):
     earliest_end_diff = end_time[None, :] - earliest_service_time_matrix
     latest_start_diff = latest_service_time_matrix - start_time[None, :]
     latest_end_diff = end_time[None, :] - latest_service_time_matrix
+
+    # 构建时间相似度矩阵
+    time_similarity_matrix = np.abs(earliest_start_diff) + np.abs(latest_end_diff)
+    nearest_time_customer_to_customer, nearest_time_depot_to_customer = find_k_dist_nodes(
+        time_similarity_matrix, num_customers, k_time
+    )
+
+    # 添加边
+    src = [0] * (node_features.shape[0] - 1) \
+          + [dummy_depot for dummy_depot in range(num_customers + 1, node_features.shape[0]) for _ in range(k_distance)] \
+          + [dummy_depot for dummy_depot in range(num_customers + 1, node_features.shape[0]) for _ in range(k_time)] \
+          + [customer for customer in range(1, num_customers + 1) for _ in range(k_distance)] \
+          + [customer for customer in range(1, num_customers + 1) for _ in range(k_time)] \
+          + [customer for customer in range(1, num_customers + 1)]
+    dst = list(range(1, node_features.shape[0])) \
+          + nearest_dist_depot_to_customer.flatten().tolist() \
+          + nearest_time_depot_to_customer.flatten().tolist() \
+          + nearest_dist_customer_to_customer.flatten().tolist() \
+          + nearest_time_customer_to_customer.flatten().tolist() \
+          + [0] * num_customers
+    # 使用集合去重，集合中的每一条边用 (src, dst) 的形式表示
+    edges = set(zip(src, dst))
+    # 解压去重后的边
+    src_unique, dst_unique = zip(*edges)
+    g.add_edges(src_unique, dst_unique)
 
     # 惩罚项（alpha和beta矩阵化）
     alpha = df_customers['Alpha'].values
