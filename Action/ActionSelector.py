@@ -6,23 +6,26 @@ import math
 
 
 class ActionSelector(nn.Module):
-    def __init__(self, embedding_dim, heads):
+    def __init__(self, embedding_dim, heads, dynamic_vehicle_dim, dynamic_customer_dim):
         """
         初始化ActionSelector，用于计算动作选择
         Args:
             embedding_dim: 节点嵌入的维度
             heads: 多头注意力机制的头数
+            dynamic_vehicle_dim: 动态车辆嵌入的维度
+            dynamic_customer_dim: 动态顾客嵌入的维度
         """
         super(ActionSelector, self).__init__()
         self.embedding_dim = embedding_dim
         self.heads = heads
+        self.dynamic_vehicle_dim = dynamic_vehicle_dim
 
         # 多头注意力层，用于计算新的上下文嵌入矩阵的多头注意力机制
-        self.mha_vehicles = nn.MultiheadAttention(embed_dim=embedding_dim, num_heads=heads, batch_first=True)
+        self.mha_vehicles = nn.MultiheadAttention(embed_dim=embedding_dim+dynamic_vehicle_dim, num_heads=heads, batch_first=True)
 
         # 查询权重矩阵 W_Q 和 键权重矩阵 W_K
-        self.W_Q = nn.Linear(embedding_dim, embedding_dim)
-        self.W_K = nn.Linear(embedding_dim, embedding_dim)
+        self.W_Q = nn.Linear(embedding_dim+dynamic_vehicle_dim, embedding_dim)
+        self.W_K = nn.Linear(embedding_dim+dynamic_customer_dim, embedding_dim)
         self.sqrt_d_k = math.sqrt(embedding_dim)
 
         self.reset_parameters()

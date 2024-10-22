@@ -9,14 +9,14 @@ import copy
 from datetime import datetime
 
 from Encoder import Encoder, MultiLayerEdgeGAT
-from Decoder import BatchVRPEnvs
+from Env import BatchVRPEnvs
 from Action import ActionSelector
 
 from params import project_name, max_workers, device
-from params import embedding_dim, action_heads
+from params import embedding_dim, action_heads, dynamic_vehicle_dim, dynamic_customer_dim
 from params import epochs, lr
 from params import small_params, num_samll_instances
-from params import MultiLayerEdgeGATParams, k_distance_nearest_neighbors, k_distance_nearest_neighbors
+from params import MultiLayerEdgeGATParams, k_distance_nearest_neighbors, k_time_nearest_neighbors
 from params import record_gradient, reward_window_size
 
 import wandb
@@ -293,8 +293,8 @@ def train_model(
 
             wandb.log(log_dict)
 
-            # 9. 如果 p 值小于 0.05，表示当前策略显著优于基线策略，更新基线策略
-            if p_value < 0.05:
+            # 10. 如果 p 值小于 0.05，表示当前策略显著优于基线策略，更新基线策略
+            if sampling_reward_mean >= greedy_reward_mean and p_value < 0.05:
                 replace_baseline_model(baseline_encoder, encoder)
                 replace_baseline_model(baseline_action_selector, action_selector)
                 print("更新Baseline策略！")
@@ -310,7 +310,7 @@ if __name__ == '__main__':
         encoder_model=MultiLayerEdgeGAT,
         encoder_params=MultiLayerEdgeGATParams,
         k_distance_nearest_neighbors=k_distance_nearest_neighbors,
-        k_time_nearest_neighbors=k_distance_nearest_neighbors,
+        k_time_nearest_neighbors=k_time_nearest_neighbors,
         device=device
     )
     encoder.to(device)
@@ -324,7 +324,9 @@ if __name__ == '__main__':
     # action selector
     action_selector = ActionSelector(
         embedding_dim=embedding_dim,
-        heads=action_heads
+        heads=action_heads,
+        dynamic_vehicle_dim=dynamic_vehicle_dim,
+        dynamic_customer_dim=dynamic_customer_dim
     )
     action_selector.to(device)
 
@@ -356,9 +358,10 @@ if __name__ == '__main__':
             record_gradient=record_gradient,
             reward_window_size=reward_window_size
         )
-    except Exception:
+    except Exception as e:
         # 捕获手动中断，进行清理操作
         print("训练过程中检测到异常，正在清理资源并关闭...")
+        print(f"异常信息: {e}")
         # 清理深度学习相关资源，例如释放GPU显存
         if torch.cuda.is_available():
             torch.cuda.empty_cache()  # 释放GPU缓存

@@ -33,13 +33,15 @@ embedding_dim = out_feats
 # --------- decoder -----------
 
 # action
-action_heads = 8
+action_heads = 10
+dynamic_vehicle_dim = 2
+dynamic_customer_dim = 1
 
 # train
 epochs = 100
 
 # optimizer
-lr = 5e-5
+lr = 1e-4
 
 # device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

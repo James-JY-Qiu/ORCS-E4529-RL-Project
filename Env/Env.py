@@ -45,6 +45,7 @@ class VRPEnv:
         self.vehicle_capacity = company_data['Vehicle_Capacity']
         self.customer_demands = customer_data['Demand'].values
         self.customer_time_windows = customer_data[['Start_Time_Window', 'End_Time_Window']].values
+        self.customer_max_time = customer_data['End_Time_Window'].max()
         self.customer_service_times = customer_data['Service_Time'].values
         self.customer_penalties = customer_data[['Alpha', 'Beta']].values
 
@@ -329,8 +330,16 @@ class BatchVRPEnvs:
             batch_status: 当前 batch 的状态
         """
         batch_vehicle_positions = [env.vehicle_positions for env in self.envs]
+        batch_remaining_capacities = [env.remaining_capacities for env in self.envs]
+        batch_time_elapsed = [env.time_elapsed for env in self.envs]
+        batch_customer_max_time = [env.customer_max_time for env in self.envs]
+        batch_customer_remaining_demands = [env.current_customer_demands for env in self.envs]
         return {
-            'batch_vehicle_positions': np.array(batch_vehicle_positions)
+            'batch_vehicle_positions': np.array(batch_vehicle_positions),
+            'batch_remaining_capacities': np.array(batch_remaining_capacities),
+            'batch_time_elapsed': np.array(batch_time_elapsed),
+            'batch_customer_max_time': np.array(batch_customer_max_time),
+            'batch_customer_remaining_demands': np.array(batch_customer_remaining_demands)
         }
 
 
