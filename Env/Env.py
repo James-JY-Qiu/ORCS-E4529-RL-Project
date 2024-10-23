@@ -40,7 +40,6 @@ class VRPEnv:
         self.company_data = company_data
 
         self.num_customers = company_data['Num_Customers']
-        self.dummy_wait_node_index_thred = self.num_customers + 1
         self.vehicle_count = company_data['Num_Vehicles']
         self.vehicle_capacity = company_data['Vehicle_Capacity']
         self.customer_demands = customer_data['Demand'].values
@@ -60,6 +59,7 @@ class VRPEnv:
         self.num_nodes = None
         self.wait_times = None
         self.num_wait_time_dummy_node = None
+        self.wait_time_dummy_node_index_list = None
 
         self.reset()  # 初始化状态
 
@@ -71,6 +71,8 @@ class VRPEnv:
         self.vehicle_leave = np.zeros(self.vehicle_count, dtype=bool)
         # 每辆车的剩余容量
         self.remaining_capacities = np.full((self.vehicle_count,), self.vehicle_capacity, dtype=np.float64)
+        # 判断车辆是否结束
+        self.finished_vehicle = np.zeros(self.vehicle_count, dtype=bool)
         # 每辆车已经经过的时间
         self.time_elapsed = np.zeros(self.vehicle_count, dtype=np.float64)
         # 客户当前的需求
@@ -90,6 +92,10 @@ class VRPEnv:
         self.num_nodes = num_nodes
         self.wait_times = wait_times
         self.num_wait_time_dummy_node = len(wait_times)
+        self.wait_time_dummy_node_index_list = list(range(
+            self.num_customers + 1, self.num_customers + 1 + self.num_wait_time_dummy_node
+        ))
+        self.dummy_wait_node_index_thred = self.wait_time_dummy_node_index_list[0]
 
     def update_vehicle_position(self, vehicle_id, new_position):
         """
@@ -101,39 +107,36 @@ class VRPEnv:
             last_position: 上一个位置（当前客户ID）
         """
         last_position = self.vehicle_positions[vehicle_id]
+        # 更新车辆位置到新的位置
+        self.vehicle_positions[vehicle_id] = new_position
 
-        # 如果车辆没离开 depot，则执行等待 action 或者从dummy waiting nodes 返回 depot
-        if not self.vehicle_leave[vehicle_id]:
-            # 如果车辆在 dummy waiting nodes，记录等待时间，更新 self.batch_vehicle_leave
-            if last_position >= self.dummy_wait_node_index_thred:
+        if not self.finished_vehicle[vehicle_id]:
+            # 如果车辆没离开 depot，则执行等待 action 或者从dummy waiting nodes 返回 depot
+            if not self.vehicle_leave[vehicle_id]:
+                # 如果车辆从 dummy waiting nodes返回，记录等待时间，更新 self.batch_vehicle_leave
+                if last_position in self.wait_time_dummy_node_index_list:
+                    # 更新车辆时间
+                    wait_time_idx = last_position - self.dummy_wait_node_index_thred
+                    wait_time = self.wait_times[wait_time_idx]
+                    self.time_elapsed[vehicle_id] += wait_time
+                    self.vehicle_leave[vehicle_id] = True
+            else:
                 # 更新车辆时间
-                wait_time_idx = last_position - self.dummy_wait_node_index_thred
-                wait_time = self.wait_times[wait_time_idx]
-                self.time_elapsed[vehicle_id] += wait_time
-                self.vehicle_leave[vehicle_id] = True
-            # 更新车辆位置到新的位置
-            self.vehicle_positions[vehicle_id] = new_position
-
-        # 如果车辆没有待在 depot 不动 （运送完毕）
-        elif not (last_position == new_position == 0):
-            # 更新车辆时间
-            travel_time = self.travel_time_matrix[last_position, new_position]
-            service_time_last_customer = self.customer_service_times[last_position]
-            self.time_elapsed[vehicle_id] += service_time_last_customer + travel_time
-            # 更新车辆位置为新的客户
-            self.vehicle_positions[vehicle_id] = new_position
-            # 更新车辆的剩余容量
-            current_capacities = self.remaining_capacities[vehicle_id]
-            current_customer_demand = self.current_customer_demands[new_position]
-            self.current_customer_demands[new_position] = max(
-                0, current_customer_demand - current_capacities
-            )
-            self.remaining_capacities[vehicle_id] = max(
-                0, current_capacities - current_customer_demand
-            )
-            # 标记该客户已完成需求
-            if self.current_customer_demands[new_position] == 0:
-                self.finished_customers[new_position] = True
+                travel_time = self.travel_time_matrix[last_position, new_position]
+                service_time_last_customer = self.customer_service_times[last_position]
+                self.time_elapsed[vehicle_id] += service_time_last_customer + travel_time
+                # 更新车辆的剩余容量
+                current_capacities = self.remaining_capacities[vehicle_id]
+                current_customer_demand = self.current_customer_demands[new_position]
+                self.current_customer_demands[new_position] = max(
+                    0, current_customer_demand - current_capacities
+                )
+                self.remaining_capacities[vehicle_id] = max(
+                    0, current_capacities - current_customer_demand
+                )
+                # 标记该客户已完成需求
+                if self.current_customer_demands[new_position] == 0:
+                    self.finished_customers[new_position] = True
 
         return last_position
 
@@ -149,20 +152,16 @@ class VRPEnv:
         if not self.vehicle_leave[vehicle_id]:
             current_position = self.vehicle_positions[vehicle_id]
             # 如果车辆在 dummy waiting nodes, 只能返回 depot
-            if current_position >= self.dummy_wait_node_index_thred:
+            if current_position in self.wait_time_dummy_node_index_list:
                 valid_customers = [0]
             # 如果车辆在 depot，则前往 dummy waiting nodes
             elif current_position == 0:
-                valid_customers = list(range(
-                    self.dummy_wait_node_index_thred,
-                    self.dummy_wait_node_index_thred + self.num_wait_time_dummy_node
-                ))
+                valid_customers = self.wait_time_dummy_node_index_list
             else:
                 raise Exception('Logic Error! Check the update of self.batch_vehicle_leave')
 
-        # 如果车辆 remaining capacity 为 0，或者所有用户已经访问完，则返回 depot
-        elif (self.remaining_capacities[vehicle_id] == 0 or
-              self.finished_customers[1:].all()):
+        # 如果车辆结束，车辆 remaining capacity 为 0，或者所有用户已经访问完，则返回 depot
+        elif self.finished_vehicle[vehicle_id] or self.remaining_capacities[vehicle_id] == 0 or self.finished_customers[1:].all():
             valid_customers = [0]
         else:
             valid_customers = []
@@ -196,10 +195,7 @@ class VRPEnv:
         Returns:
             reward: 奖励
         """
-        if (last_position == action == 0) or (
-                action >= self.dummy_wait_node_index_thred) or (
-                last_position >= self.dummy_wait_node_index_thred
-        ):
+        if self.finished_vehicle[vehicle_id] or action in self.wait_time_dummy_node_index_list or last_position in self.wait_time_dummy_node_index_list:
             return 0.0
         distance = self.travel_time_matrix[last_position, action]
         arrive_time = self.time_elapsed[vehicle_id]
@@ -222,7 +218,7 @@ class VRPEnv:
         Returns:
             done: 是否结束
         """
-        finished = self.finished_customers[1:].all() and (self.vehicle_positions == 0).all()
+        finished = self.finished_customers[1:].all() and self.finished_vehicle.all()
         return bool(finished)
 
     def step(self, vehicle_id, action):
@@ -238,6 +234,9 @@ class VRPEnv:
         last_position = self.update_vehicle_position(vehicle_id, action)
         # 计算奖励
         reward = self.calculate_reward(vehicle_id, action, last_position)
+        # 判断是否结束
+        if not self.finished_vehicle[vehicle_id] and action == 0 and last_position not in self.wait_time_dummy_node_index_list:
+            self.finished_vehicle[vehicle_id] = True
 
         return reward
 
