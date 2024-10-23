@@ -107,10 +107,10 @@ class ActionSelector(nn.Module):
             selected_actions: 选择的客户索引 (batch_size, M)
             log_probs: 对数概率 (在sampling模式下)
         """
+        log_probs = None
         if mode == 'greedy':
             # 选择概率最大的客户索引
             selected_actions = torch.argmax(action_probs, dim=2)
-            log_probs = None
         elif mode == 'sampling':
             # 通过概率进行抽样选择
             # 首先将 action_probs reshape 成 (batch_size * M, N)

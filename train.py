@@ -212,7 +212,7 @@ def train_model(
     current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     wandb.init(
         project=project_name,
-        name= f"{env_name}_{env_params['index']}_{current_time}",
+        name=f"{env_name}_{env_params['index']}_{current_time}",
         config={
             "env_name": env_name,
             "env_params": env_params,
@@ -233,6 +233,7 @@ def train_model(
         loss_list = []
 
         for batch_id in tqdm(range(batch_times)):
+            # ============================= Strategy Gradient =============================
             # 1. sampling run
             sampling_reward, log_probs_info = run_batch(
                 env, encoder, action_selector,
@@ -240,14 +241,20 @@ def train_model(
             )
             # 2. greedy run
             with torch.no_grad():
-                greedy_reward, _ = run_batch(
+                greedy_reward, _, = run_batch(
                     env, baseline_encoder, baseline_action_selector,
                     mode='greedy', generate=False, device=device
                 )
             # 3. 计算差值
             advantage = sampling_reward - greedy_reward
+            advantage_std = advantage.std()
+            if advantage_std != 0:
+                standardize_advantage = (advantage - advantage.mean()) / advantage_std
+            else:
+                standardize_advantage = advantage
             # 4. 计算loss
-            loss = -(log_probs_info * advantage).mean()
+            cost = (log_probs_info * standardize_advantage).mean()
+            loss = -cost
             # 5. 清除上次计算的梯度
             optimizer.zero_grad()
             # 6. 反向传播计算当前 batch 的梯度
@@ -275,6 +282,7 @@ def train_model(
                 "batch_id": batch_id,
                 "sampling_reward_mean": sampling_reward_mean,
                 "greedy_reward_mean": greedy_reward_mean,
+                "cost": cost.item(),
                 "loss": loss.item(),
                 "wilcoxon_stat": w_stat,
                 "wilcoxon_p_value": p_value,
@@ -298,6 +306,8 @@ def train_model(
             print(
                 f"Batch ID: {batch_id}, Sampling Reward: {sampling_reward.mean().item()}, Greedy Reward: {greedy_reward.mean().item()}, Loss: {loss.item()}, Wilcoxon Stat: {w_stat}, P-value: {p_value}"
             )
+
+            # ============================= End Strategy Gradient =============================
 
 
 if __name__ == '__main__':

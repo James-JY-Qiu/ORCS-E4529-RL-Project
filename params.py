@@ -9,8 +9,9 @@ max_workers = 8
 project_name = 'EdgeGAT-CVRPSTW'
 
 # --------------------- Graph Parameters ---------------------
-k_distance_nearest_neighbors = 5
-k_time_nearest_neighbors = 5
+# change the number of nearest neighbors when using different environment
+k_distance_nearest_neighbors = 2
+k_time_nearest_neighbors = 2
 
 
 # --------------------- Hyperparameters ---------------------

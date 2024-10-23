@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 from dgl.nn import EdgeGATConv
 
@@ -20,7 +21,7 @@ class MultiLayerEdgeGAT(nn.Module):
         self.edge_feats = edge_feats
         self.units = units
         self.num_heads = num_heads
-        assert num_layers > 2, 'number of layers must be greater than 2'
+        assert num_layers >= 2, 'number of layers must be at least 2'
         self.num_layers = num_layers
         self.feat_drop = feat_drop
         self.attn_drop = attn_drop
@@ -43,6 +44,10 @@ class MultiLayerEdgeGAT(nn.Module):
         edge_embeddings = [nn.Linear(units, units) for _ in range(num_layers-1)]
         self.edge_embeddings = nn.ModuleList(edge_embeddings)
         self.edge_dropout = nn.Dropout(edge_drop)
+
+    def reset_parameters(self):
+        torch.nn.init.xavier_uniform_(self.node_features_embedding.weight)
+        torch.nn.init.xavier_uniform_(self.edge_features_embedding.weight)
 
     def forward(self, g):
         # 从图中提取出节点特征和边特征
