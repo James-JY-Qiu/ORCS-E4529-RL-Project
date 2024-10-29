@@ -10,8 +10,8 @@ class Encoder(nn.Module):
             self,
             encoder_model,
             encoder_params,
-            k_distance_nearest_neighbors,
-            k_time_nearest_neighbors,
+            k_distance_nearest_neighbors_percent,
+            k_time_nearest_neighbors_percent,
             device
     ):
         """
@@ -22,14 +22,11 @@ class Encoder(nn.Module):
         """
         super(Encoder, self).__init__()
         self.encoder = encoder_model(**encoder_params)
-        self.k_distance_nearest_neighbors = k_distance_nearest_neighbors
-        self.k_time_nearest_neighbors = k_time_nearest_neighbors
+        self.k_distance_nearest_neighbors_percent = k_distance_nearest_neighbors_percent
+        self.k_time_nearest_neighbors_percent = k_time_nearest_neighbors_percent
         self.device = device
 
         # 所有存储变量
-        self.num_customers = None
-        self.wait_times = None
-        self.dummy_wait_node_index_thred = None
         self.num_wait_time_dummy_node = None
         self.batch_graphs = None
         self.batch_node_features = None
@@ -39,13 +36,10 @@ class Encoder(nn.Module):
         self.batch_global_embedding = None
         self.batch_num_nodes = None
 
-    def encode(self, batch_customer_data, batch_company_data, num_customers, wait_times):
+    def encode(self, batch_customer_data, batch_company_data, wait_times):
         batch_size = len(batch_customer_data)
-        self.num_customers = num_customers
-        self.wait_times = torch.tensor(wait_times, dtype=torch.float32)
-        self.dummy_wait_node_index_thred = num_customers + 1
-        self.num_wait_time_dummy_node = len(wait_times)
 
+        self.num_wait_time_dummy_node = len(wait_times)
         self.batch_graphs = []
         self.batch_node_features = []
         self.batch_edge_features = []
@@ -55,7 +49,7 @@ class Encoder(nn.Module):
             company_data = batch_company_data[i]
             g, node_features, edge_features, distance_matrix = build_graph(
                 customer_data, company_data, wait_times,
-                self.k_distance_nearest_neighbors, self.k_time_nearest_neighbors,
+                self.k_distance_nearest_neighbors_percent, self.k_time_nearest_neighbors_percent,
             )
             self.batch_node_features.append(node_features)
             self.batch_edge_features.append(edge_features)
@@ -79,7 +73,8 @@ class Encoder(nn.Module):
             batch_remaining_capacities,
             batch_time_elapsed,
             batch_customer_max_time,
-            batch_customer_remaining_demands
+            batch_customer_remaining_demands,
+            include_global=True
     ):
         """
         获取batch中所有instances的所有车辆和客户的当前状态
@@ -89,6 +84,7 @@ class Encoder(nn.Module):
             batch_time_elapsed: 车辆的已用时间
             batch_customer_max_time: 客户的最大时间
             batch_customer_remaining_demands: 客户的剩余需求
+            include_global: 是否包含全局静态信息
         Returns:
             current_state: 当前的状态，包括每辆车和未完成客户的信息
         """
@@ -100,15 +96,7 @@ class Encoder(nn.Module):
         batch_time_elapsed_tensor = torch.tensor(batch_time_elapsed, dtype=tensor_dtype, device=self.device)
         batch_customer_max_time_tensor = torch.tensor(batch_customer_max_time, dtype=tensor_dtype, device=self.device)
 
-        # (1) (batch_size, 1 + M, embedding_dims + 2)
-        # 1.1 Global embedding part: shape (batch_size, 1, embedding_dims + 2)
-        global_remaining_capacity = batch_remaining_capacities_tensor.sum(dim=1, keepdim=True)  # shape (batch_size, 1)
-        global_context = torch.cat((global_remaining_capacity, batch_customer_max_time_tensor.unsqueeze(-1)), dim=1)  # shape (batch_size, 2)
-        global_embedding = torch.cat((
-            self.batch_global_embedding.unsqueeze(1), global_context.unsqueeze(1)
-        ), dim=2)  # shape (batch_size, 1, embedding_dims + 2)
-
-        # 1.2 Vehicles embedding part: shape (batch_size, num_vehicles, embedding_dims + 2)
+        # 1.1 Vehicles embedding part: shape (batch_size, num_vehicles, embedding_dims + 2)
         vehicle_node_embeddings = torch.gather(
             self.batch_encode_node_features,
             1,
@@ -116,15 +104,26 @@ class Encoder(nn.Module):
         )  # shape (batch_size, num_vehicles, embedding_dims)
         vehicle_context = torch.cat((
             batch_remaining_capacities_tensor.unsqueeze(-1), batch_time_elapsed_tensor.unsqueeze(-1)
-        ), dim=2)  # shape (batch_size, num_vehicles, 2)
+        ), dim=-1)  # shape (batch_size, num_vehicles, 2)
         vehicle_embeddings = torch.cat((
             vehicle_node_embeddings, vehicle_context
-        ), dim=2)  # shape (batch_size, num_vehicles, embedding_dims + 2)
+        ), dim=-1)  # shape (batch_size, num_vehicles, embedding_dims + 2)
 
-        # Combine global and vehicles embeddings: shape (batch_size, 1 + num_vehicles, embedding_dims + 2)
-        current_vehicle_embeddings = torch.cat((
-            global_embedding, vehicle_embeddings
-        ), dim=1)
+        # 1.2 Combine global and vehicles embeddings: shape (batch_size, 1 + num_vehicles, embedding_dims + 2)
+        if include_global:
+            # 1.1 Global embedding part: shape (batch_size, 1, embedding_dims + 2)
+            global_remaining_capacity = batch_remaining_capacities_tensor.sum(dim=1, keepdim=True)  # shape (batch_size, 1)
+            global_context = torch.cat((
+                global_remaining_capacity, batch_customer_max_time_tensor.unsqueeze(-1)), dim=-1
+            )  # shape (batch_size, 2)
+            global_embedding = torch.cat((
+                self.batch_global_embedding.unsqueeze(1), global_context.unsqueeze(1)
+            ), dim=2)  # shape (batch_size, 1, embedding_dims + 2)
+            current_vehicle_embeddings = torch.cat((
+                global_embedding, vehicle_embeddings
+            ), dim=1)
+        else:
+            current_vehicle_embeddings = vehicle_embeddings  # shape (batch_size, num_vehicles, embedding_dims + 2)
 
         # (2) (batch_size, N, embedding_dims + 1)
         # Customer positions embeddings

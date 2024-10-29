@@ -1,5 +1,8 @@
+from collections import deque
+
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from torch.optim import Adam
 import scipy.stats as stats
@@ -12,84 +15,47 @@ from Encoder import Encoder, MultiLayerEdgeGAT
 from Env import BatchVRPEnvs
 from Action import ActionSelector
 
+from train_model.train_utils import return_batch_neg_inf_masks, batch_steps, record_gradients_and_weights, env_encode, replace_baseline_model, set_model_status
+
 from params import project_name, max_workers, device
-from params import embedding_dim, action_heads, dynamic_vehicle_dim, dynamic_customer_dim
-from params import epochs, lr
 from params import small_params, num_samll_instances
-from params import MultiLayerEdgeGATParams, k_distance_nearest_neighbors, k_time_nearest_neighbors
+from params import demand_unmet_penalty
+from params import k_distance_nearest_neighbors_percent, k_time_nearest_neighbors_percent
 from params import record_gradient, reward_window_size
 
 import wandb
+import traceback
 
 
-def return_batch_neg_inf_masks(env, max_num_vehicles):
-    """
-    返回整个 batch 的 neg_inf_masks (batch_size, M, N)
-    """
-    # 使用 ProcessPoolExecutor 进行多进程并行化，使用 map 保证顺序
-    batch_neg_inf_mask = []
-    for vrp_env in env.envs:
-        instance_neg_inf_mask = []
-        vehicle_count = vrp_env.vehicle_count  # 获取当前实例的车辆数量
+# --------------------- Hyperparameters ---------------------
+# --------- encoder -----------
 
-        # 将每辆真实车辆的掩码添加到实例中
-        for vehicle_id in range(vehicle_count):
-            neg_inf_mask = vrp_env.return_neg_inf_mask(vehicle_id)
-            instance_neg_inf_mask.append(neg_inf_mask)
+# MultiLayerEdge
+out_feats = 128
+MultiLayerEdgeGATParams = {
+    'in_feats': 11,
+    'edge_feats': 10,
+    'units': 128,
+    'num_heads': 8,
+    'num_layers': 2,
+    'feat_drop': 0.0,
+    'attn_drop': 0.0,
+    'edge_drop': 0.0,
+    'activation': F.leaky_relu
+}
+embedding_dim = out_feats
+# --------- decoder -----------
 
-        if max_num_vehicles - vehicle_count > 0:
-            # 为每辆虚拟车辆添加掩码，使其一直在depot处
-            depot_mask = torch.full((vrp_env.num_nodes,), float('-inf'))
-            depot_mask[0] = 0.0
-            for vehicle_id in range(max_num_vehicles - vehicle_count):
-                instance_neg_inf_mask.append(depot_mask)
+# action
+action_heads = 8
+dynamic_vehicle_dim = 2
+dynamic_customer_dim = 1
 
-        # 将该实例的所有车辆掩码堆叠在一起，形成 (num_vehicles, num_customers) 的矩阵
-        instance_neg_inf_mask = torch.stack(instance_neg_inf_mask, dim=0)
-        batch_neg_inf_mask.append(instance_neg_inf_mask)
+# train
+epochs = 100
 
-    # 最后，将所有实例的掩码堆叠在一起，形成 (batch_size, num_vehicles, num_customers) 的三维张量
-    batch_neg_inf_mask = torch.stack(batch_neg_inf_mask, dim=0)
-
-    return batch_neg_inf_mask
-
-
-def batch_steps(env, actions, instance_status, device):
-    """
-    对整个 batch 执行一次 step，使用多进程处理。
-    """
-    batch_size = env.batch_size
-    step_rewards = torch.zeros(batch_size, dtype=torch.float, device=device)  # 初始化 step_rewards
-    actions = actions.detach().cpu().numpy()  # 确保不计算梯度并且返回cpu
-
-    for instance_id, vrp_env in enumerate(env.envs):
-        if instance_status[instance_id]:
-            continue
-
-        step_reward = 0.0  # 初始 step_reward
-        for vehicle_id in range(vrp_env.vehicle_count):
-            action = actions[instance_id, vehicle_id]  # 获取 action
-            reward = vrp_env.step(vehicle_id, action)  # 计算reward并且更新状态
-            step_reward += reward
-
-        # 检查该实例是否完成
-        done = vrp_env.judge_finish()
-        step_rewards[instance_id] = step_reward
-        instance_status[instance_id] = done
-
-    return step_rewards
-
-
-def env_encode(encoder, batch_customer_data, batch_company_data, num_customers, wait_times):
-    """
-    编码环境数据
-    """
-    encoder.encode(
-        batch_customer_data=batch_customer_data,
-        batch_company_data=batch_company_data,
-        num_customers=num_customers,
-        wait_times=wait_times
-    )
+# optimizer
+lr = 1e-4
 
 
 def run_batch(env, encoder, action_selector, mode, generate, device):
@@ -100,7 +66,7 @@ def run_batch(env, encoder, action_selector, mode, generate, device):
     batch_size = env.batch_size
 
     # 编码环境数据
-    env_encode(encoder, env.batch_customer_data, env.batch_company_data, env.num_customers, env.wait_times)
+    env_encode(encoder, env.batch_customer_data, env.batch_company_data, env.wait_times)
     env.update_parameters(encoder.batch_distance_matrices, encoder.batch_num_nodes)
 
     # 记录 instance 是否结束
@@ -113,9 +79,10 @@ def run_batch(env, encoder, action_selector, mode, generate, device):
     t = 0
     while not instance_status.all():
         current_batch_status = env.get_current_batch_status()
-        current_vehicle_embeddings, current_customer_embeddings = encoder.get_current_batch_state(**current_batch_status)
-        max_num_vehicles = current_vehicle_embeddings.size(1) - 1
-        batch_neg_inf_mask = return_batch_neg_inf_masks(env, max_num_vehicles).to(device)
+        current_vehicle_embeddings, current_customer_embeddings = encoder.get_current_batch_state(
+            include_global=False, **current_batch_status
+        )
+        batch_neg_inf_mask = return_batch_neg_inf_masks(env).to(device)
         actions, log_probs = action_selector(
             current_vehicle_embeddings,
             current_customer_embeddings,
@@ -123,54 +90,17 @@ def run_batch(env, encoder, action_selector, mode, generate, device):
             mode=mode
         )
         if log_probs is not None:
-            log_probs_info = log_probs_info + log_probs.sum(dim=1)
+            log_probs_info = log_probs_info + log_probs.sum(dim=-1)
 
         # 执行选择的动作，并更新环境
-        step_rewards = batch_steps(env, actions, instance_status, device)
+        actions = actions.detach().cpu().numpy()
+        step_rewards, _, _, _ = batch_steps(env, actions, instance_status, device)
         reward_info = reward_info + step_rewards
 
         # print(f"{t} finished number: {instance_status.sum().item()}")
         t += 1
 
     return reward_info, log_probs_info
-
-
-def replace_baseline_model(baseline_model, current_model):
-    # 在复制参数时禁用梯度计算
-    with torch.no_grad():
-        baseline_model.load_state_dict(current_model.state_dict())
-
-
-def record_gradieents(encoder, action_selector):
-    # 记录梯度
-    encoder_gradients = {}
-    action_selector_gradients = {}
-
-    # print("\nEncoder Parameter Gradients:")
-    for name, param in encoder.named_parameters():
-        if param.grad is not None:
-            encoder_gradients[name] = {
-                "mean": param.grad.mean().item(),
-                "std": param.grad.std().item()
-            }
-            # print(
-            #     f"Parameter: {name}, Gradient Mean: {param.grad.mean().item()}, Gradient Std: {param.grad.std().item()}")
-        else:
-            print(f"Parameter: {name} has no gradient.")
-
-    # print("\nAction Selector Parameter Gradients:")
-    for name, param in action_selector.named_parameters():
-        if param.grad is not None:
-            action_selector_gradients[name] = {
-                "mean": param.grad.mean().item(),
-                "std": param.grad.std().item()
-            }
-            # print(
-            #     f"Parameter: {name}, Gradient Mean: {param.grad.mean().item()}, Gradient Std: {param.grad.std().item()}")
-        else:
-            print(f"Parameter: {name} has no gradient.")
-
-    return encoder_gradients, action_selector_gradients
 
 
 # Define the training function based on Algorithm 1
@@ -202,6 +132,8 @@ def train_model(
         epochs: epochs 数量
         device: CPU or GPU,
         max_workers: 最大工作线程数
+        record_gradient: 是否记录梯度
+        reward_window_size: 奖励窗口大小
     """
     env_name, env_params, total_num_instances = env_params
     batch_size = env_params['batch_size']
@@ -211,7 +143,7 @@ def train_model(
     # wandb
     current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     wandb.init(
-        project=project_name,
+        project=f"{project_name}_REINFORCE",
         name=f"{env_name}_{env_params['index']}_{current_time}",
         config={
             "env_name": env_name,
@@ -226,21 +158,28 @@ def train_model(
         }
     )
 
-    for epoch in tqdm(range(epochs)):
-        env = env_generator(max_workers=max_workers, **env_params)
-        sampling_reward_list = []
-        greedy_reward_list = []
-        loss_list = []
+    sampling_reward_list = deque(maxlen=reward_window_size)
+    greedy_reward_list = deque(maxlen=reward_window_size)
+    loss_list = deque(maxlen=reward_window_size)
 
+    env = env_generator(
+        demand_unmet_penalty=demand_unmet_penalty,
+        max_workers=max_workers,
+        **env_params
+    )
+
+    for epoch in tqdm(range(epochs)):
         for batch_id in tqdm(range(batch_times)):
             # ============================= Strategy Gradient =============================
             # 1. sampling run
+            set_model_status([encoder, action_selector], training=True)
             sampling_reward, log_probs_info = run_batch(
                 env, encoder, action_selector,
                 mode='sampling', generate=True, device=device
             )
             # 2. greedy run
             with torch.no_grad():
+                set_model_status([encoder, action_selector], training=False)
                 greedy_reward, _, = run_batch(
                     env, baseline_encoder, baseline_action_selector,
                     mode='greedy', generate=False, device=device
@@ -253,25 +192,35 @@ def train_model(
             else:
                 standardize_advantage = advantage
             # 4. 计算loss
-            cost = (log_probs_info * standardize_advantage).mean()
-            loss = -cost
+            expected_rewards = (log_probs_info * standardize_advantage).mean()
+            loss = -expected_rewards
             # 5. 清除上次计算的梯度
             optimizer.zero_grad()
             # 6. 反向传播计算当前 batch 的梯度
             loss.backward()
             if record_gradient:
-                encoder_gradients, action_selector_gradients = record_gradieents(encoder, action_selector)
+                encoder_gradients = record_gradients_and_weights(encoder)
+                action_selector_gradients = record_gradients_and_weights(action_selector)
             else:
-                encoder_gradients, action_selector_gradients = None, None
+                encoder_gradients = action_selector_gradients = None
+
             # 7. 使用优化器更新参数
             optimizer.step()
 
             # 8. 进行 Wilcoxon 检验，检验当前策略与基线策略是否有显著差异
-            w_stat, p_value = stats.wilcoxon(sampling_reward.cpu().numpy(), greedy_reward.cpu().numpy())
+            sampling_reward = sampling_reward.detach().cpu().numpy()
+            greedy_reward = greedy_reward.detach().cpu().numpy()
+            wilcoxon_results = stats.wilcoxon(sampling_reward, greedy_reward)
 
             # 9. 记录数据
-            sampling_reward_mean = sampling_reward.mean().item()
-            greedy_reward_mean = greedy_reward.mean().item()
+            sampling_reward_mean = sampling_reward.mean()
+            sampling_reward_max = sampling_reward.max()
+            sampling_reward_min = sampling_reward.min()
+            sampling_reward_std = sampling_reward.std()
+            greedy_reward_mean = greedy_reward.mean()
+            greedy_reward_max = greedy_reward.max()
+            greedy_reward_min = greedy_reward.min()
+            greedy_reward_std = greedy_reward.std()
 
             sampling_reward_list.append(sampling_reward_mean)
             greedy_reward_list.append(greedy_reward_mean)
@@ -281,42 +230,63 @@ def train_model(
                 "epoch": epoch,
                 "batch_id": batch_id,
                 "sampling_reward_mean": sampling_reward_mean,
+                "sampling_reward_max": sampling_reward_max,
+                "sampling_reward_min": sampling_reward_min,
+                "sampling_reward_std": sampling_reward_std,
                 "greedy_reward_mean": greedy_reward_mean,
-                "cost": cost.item(),
+                "greedy_reward_max": greedy_reward_max,
+                "greedy_reward_min": greedy_reward_min,
+                "greedy_reward_std": greedy_reward_std,
+                "sampling_greedy_diff_percent": (sampling_reward_mean - greedy_reward_mean) / greedy_reward_mean,
+                "expected_rewards": expected_rewards.item(),
                 "loss": loss.item(),
-                "wilcoxon_stat": w_stat,
-                "wilcoxon_p_value": p_value,
+                "wilcoxon_stat": wilcoxon_results.statistic,
+                "wilcoxon_p_value": wilcoxon_results.pvalue,
                 "encoder_gradients": encoder_gradients,
                 "action_selector_gradients": action_selector_gradients
             }
 
             if reward_window_size > 0 and batch_id > reward_window_size:
-                log_dict["moving_average_sampling_reward"] = np.mean( sampling_reward_list[-reward_window_size:])
-                log_dict["moving_average_greedy_reward"] = np.mean(greedy_reward_list[-reward_window_size:])
-                log_dict["moving_average_loss"] = np.mean(loss_list[-reward_window_size:])
+                log_dict["moving_average_sampling_reward"] = np.mean(sampling_reward_list)
+                log_dict["moving_average_greedy_reward"] = np.mean(greedy_reward_list)
+                log_dict["moving_average_loss"] = np.mean(loss_list)
 
             wandb.log(log_dict)
 
             # 10. 如果 p 值小于 0.05，表示当前策略显著优于基线策略，更新基线策略
-            if sampling_reward_mean >= greedy_reward_mean and p_value < 0.05:
+            if sampling_reward_mean >= greedy_reward_mean and wilcoxon_results.pvalue < 0.05:
                 replace_baseline_model(baseline_encoder, encoder)
                 replace_baseline_model(baseline_action_selector, action_selector)
                 print("更新Baseline策略！")
 
+            # 11. 保存模型
+            if batch_id % 100 == 0:
+                torch.save(encoder.state_dict(), f'models/check_point_encoder.pth')
+                torch.save(baseline_encoder.state_dict(), f'models/check_point_baseline_encoder.pth')
+                torch.save(action_selector.state_dict(), f'models/check_point_action_selector.pth')
+                torch.save(baseline_action_selector.state_dict(), f'models/check_point_baseline_action_selector.pth')
+                print("模型已保存！")
+
             print(
-                f"Batch ID: {batch_id}, Sampling Reward: {sampling_reward.mean().item()}, Greedy Reward: {greedy_reward.mean().item()}, Loss: {loss.item()}, Wilcoxon Stat: {w_stat}, P-value: {p_value}"
+                f"Batch ID: {batch_id}, "
+                f"Sampling Reward: {sampling_reward.mean().item()}, "
+                f"Greedy Reward: {greedy_reward.mean().item()}, "
+                f"Loss: {loss.item()}, "
+                f"Wilcoxon Stat: {wilcoxon_results.statistic}, P-value: {wilcoxon_results.pvalue}"
             )
 
             # ============================= End Strategy Gradient =============================
 
 
 if __name__ == '__main__':
+    ENV_PARAMS = ('small', small_params, num_samll_instances)
+
     # encoder
     encoder = Encoder(
         encoder_model=MultiLayerEdgeGAT,
         encoder_params=MultiLayerEdgeGATParams,
-        k_distance_nearest_neighbors=k_distance_nearest_neighbors,
-        k_time_nearest_neighbors=k_time_nearest_neighbors,
+        k_distance_nearest_neighbors_percent=k_distance_nearest_neighbors_percent,
+        k_time_nearest_neighbors_percent=k_time_nearest_neighbors_percent,
         device=device
     )
     encoder.to(device)
@@ -351,7 +321,7 @@ if __name__ == '__main__':
     try:
         # training
         train_model(
-            env_params=('small', small_params, num_samll_instances),
+            env_params=ENV_PARAMS,
             env_generator=BatchVRPEnvs,
             encoder=encoder,
             baseline_encoder=baseline_encoder,
@@ -367,6 +337,8 @@ if __name__ == '__main__':
     except Exception as e:
         # 捕获手动中断，进行清理操作
         print("训练过程中检测到异常，正在清理资源并关闭...")
+        # 打印完整的异常堆栈信息
+        traceback.print_exc()
         print(f"异常信息: {e}")
         # 清理深度学习相关资源，例如释放GPU显存
         if torch.cuda.is_available():
@@ -384,7 +356,6 @@ if __name__ == '__main__':
             print("模型已成功保存。")
         except Exception as e:
             print(f"保存模型时出错: {e}")
-
         try:
             # 确保 wandb 会话关闭
             wandb.finish()

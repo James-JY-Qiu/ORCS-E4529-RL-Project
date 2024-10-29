@@ -61,7 +61,6 @@ def generate_instance(
     # 将仓库数据和客户数据合并
     customer_df = pd.concat([pd.DataFrame(depot, columns=['X', 'Y']), customer_df], ignore_index=True)
     customer_df.fillna(0, inplace=True)
-    customer_df.iloc[0, 4] = 0
     customer_df.iloc[0, 5] = company_data['Max_Time']
 
     return customer_df, company_data

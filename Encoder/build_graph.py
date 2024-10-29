@@ -3,9 +3,11 @@ import torch
 import dgl
 import numpy as np
 from scipy.spatial.distance import cdist
+from math import ceil
 
 
-def find_k_dist_nodes(similarity_matrix, num_customers, k):
+def find_k_dist_nodes(similarity_matrix, num_customers, num_wait_time_dummy_node, k):
+    similarity_matrix = similarity_matrix.copy()
     # 将自己到自己的距离设为无穷大，避免选择自己
     np.fill_diagonal(similarity_matrix, np.inf)
 
@@ -14,17 +16,19 @@ def find_k_dist_nodes(similarity_matrix, num_customers, k):
     # 对每一行进行排序并取最近的 k 个
     nearest_customers_indices = np.argsort(sub_matrix_customers, axis=1)[:, :k]
 
-    # 对于第 [1+num_customers:] 的节点，找到 [1:1+num_customers] 中距离它最近的 k 个节点
-    sub_matrix_depots_to_customers = similarity_matrix[1 + num_customers:, 1:1 + num_customers]
+    # 对于第 [1+num_customers:1+num_customers+num_wait_time_dummy_node] 的节点，找到 [1:1+num_customers] 中距离它最近的 k 个节点
+    sub_matrix_depots_to_customers = similarity_matrix[1 + num_customers:1 + num_customers + num_wait_time_dummy_node, 1:1 + num_customers]
     # 对每一行进行排序并取最近的 k 个
     nearest_depots_indices = np.argsort(sub_matrix_depots_to_customers, axis=1)[:, :k]
 
     return nearest_customers_indices+1, nearest_depots_indices+1
 
 
-def build_graph(df_customers, company_data, wait_times, k_distance, k_time):
+def build_graph(df_customers, company_data, wait_times, k_distance_percent, k_time_percent):
     depot = company_data['depot']
     num_customers = company_data['Num_Customers']
+    k_distance = ceil(num_customers * k_distance_percent)
+    k_time = ceil(num_customers * k_time_percent)
     # 添加等待时间节点
     num_wait_time_dummy_node = len(wait_times)
     df_customers_wait_time = pd.DataFrame({
@@ -66,7 +70,7 @@ def build_graph(df_customers, company_data, wait_times, k_distance, k_time):
 
     # 根据距离矩阵计算最近邻节点
     nearest_dist_customer_to_customer, nearest_dist_depot_to_customer = find_k_dist_nodes(
-        distance_matrix, num_customers, k_distance
+        distance_matrix, num_customers, num_wait_time_dummy_node, k_distance
     )
 
     # 计算最早和最晚服务时间矩阵
@@ -76,7 +80,7 @@ def build_graph(df_customers, company_data, wait_times, k_distance, k_time):
     earliest_service_time_matrix = start_time[:, None] + service_time[:, None] + distance_matrix
     latest_service_time_matrix = end_time[:, None] + service_time[:, None] + distance_matrix
 
-    # 服务时间差（矩阵化）
+    # 服务时间差
     earliest_start_diff = earliest_service_time_matrix - start_time[None, :]
     earliest_end_diff = end_time[None, :] - earliest_service_time_matrix
     latest_start_diff = latest_service_time_matrix - start_time[None, :]
@@ -85,13 +89,13 @@ def build_graph(df_customers, company_data, wait_times, k_distance, k_time):
     # 构建时间相似度矩阵
     time_similarity_matrix = np.abs(earliest_start_diff) + np.abs(latest_end_diff)
     nearest_time_customer_to_customer, nearest_time_depot_to_customer = find_k_dist_nodes(
-        time_similarity_matrix, num_customers, k_time
+        time_similarity_matrix, num_customers, num_wait_time_dummy_node, k_time
     )
 
     # 添加边
     src = [0] * (node_features.shape[0] - 1) \
-          + [dummy_depot for dummy_depot in range(num_customers + 1, node_features.shape[0]) for _ in range(k_distance)] \
-          + [dummy_depot for dummy_depot in range(num_customers + 1, node_features.shape[0]) for _ in range(k_time)] \
+          + [dummy_depot for dummy_depot in range(num_customers + 1, num_customers + 1 + num_wait_time_dummy_node) for _ in range(k_distance)] \
+          + [dummy_depot for dummy_depot in range(num_customers + 1, num_customers + 1 + num_wait_time_dummy_node) for _ in range(k_time)] \
           + [customer for customer in range(1, num_customers + 1) for _ in range(k_distance)] \
           + [customer for customer in range(1, num_customers + 1) for _ in range(k_time)] \
           + [customer for customer in range(1, num_customers + 1)]

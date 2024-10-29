@@ -40,6 +40,7 @@ class VRPEnv:
         self.company_data = company_data
 
         self.num_customers = company_data['Num_Customers']
+        self.customer_node_index_list = list(range(1, self.num_customers + 1))
         self.vehicle_count = company_data['Num_Vehicles']
         self.vehicle_capacity = company_data['Vehicle_Capacity']
         self.customer_demands = customer_data['Demand'].values
@@ -55,11 +56,14 @@ class VRPEnv:
         self.time_elapsed = None
         self.current_customer_demands = None
         self.finished_customers = None
+        self.finished_vehicle = None
         self.travel_time_matrix = None
         self.num_nodes = None
         self.wait_times = None
         self.num_wait_time_dummy_node = None
         self.wait_time_dummy_node_index_list = None
+        self.dummy_wait_node_index_thred = None
+        self.demand_unmet_penalty = None
 
         self.reset()  # 初始化状态
 
@@ -80,7 +84,9 @@ class VRPEnv:
         # 客户是否已完成需求
         self.finished_customers = np.zeros(self.num_customers + 1, dtype=bool)
 
-    def update_parameters(self, distance_matrix, num_nodes, wait_times):
+    def update_parameters(
+            self, distance_matrix, num_nodes, wait_times, demand_unmet_penalty
+    ):
         """
         更新环境参数
         Args:
@@ -97,6 +103,8 @@ class VRPEnv:
         ))
         self.dummy_wait_node_index_thred = self.wait_time_dummy_node_index_list[0]
 
+        self.demand_unmet_penalty = demand_unmet_penalty
+
     def update_vehicle_position(self, vehicle_id, new_position):
         """
         更新车辆的位置及状态
@@ -107,25 +115,25 @@ class VRPEnv:
             last_position: 上一个位置（当前客户ID）
         """
         last_position = self.vehicle_positions[vehicle_id]
+        # 判断车辆是否结束
+        if new_position == 0:
+            self.finished_vehicle[vehicle_id] = True
         # 更新车辆位置到新的位置
         self.vehicle_positions[vehicle_id] = new_position
-
-        if not self.finished_vehicle[vehicle_id]:
-            # 如果车辆没离开 depot，则执行等待 action 或者从dummy waiting nodes 返回 depot
-            if not self.vehicle_leave[vehicle_id]:
-                # 如果车辆从 dummy waiting nodes返回，记录等待时间，更新 self.batch_vehicle_leave
-                if last_position in self.wait_time_dummy_node_index_list:
-                    # 更新车辆时间
-                    wait_time_idx = last_position - self.dummy_wait_node_index_thred
-                    wait_time = self.wait_times[wait_time_idx]
-                    self.time_elapsed[vehicle_id] += wait_time
-                    self.vehicle_leave[vehicle_id] = True
+        if last_position == 0 and new_position in self.wait_time_dummy_node_index_list:
+            self.vehicle_leave[vehicle_id] = True
+        else:
+            # 更新车辆时间
+            if last_position in self.wait_time_dummy_node_index_list:
+                travel_time = self.travel_time_matrix[0, new_position]
+                wait_time_index = last_position - self.dummy_wait_node_index_thred
+                service_time_last_customer = self.wait_times[wait_time_index]
             else:
-                # 更新车辆时间
                 travel_time = self.travel_time_matrix[last_position, new_position]
                 service_time_last_customer = self.customer_service_times[last_position]
-                self.time_elapsed[vehicle_id] += service_time_last_customer + travel_time
-                # 更新车辆的剩余容量
+            self.time_elapsed[vehicle_id] += service_time_last_customer + travel_time
+            # 更新车辆的剩余容量
+            if new_position != 0:
                 current_capacities = self.remaining_capacities[vehicle_id]
                 current_customer_demand = self.current_customer_demands[new_position]
                 self.current_customer_demands[new_position] = max(
@@ -148,23 +156,21 @@ class VRPEnv:
         Returns:
             valid_customers: 该车辆可访问的合法客户列表
         """
-        # 如果车辆没离开depot，则选择等待 action 或者从dummy waiting nodes 返回 depot
+        current_location = self.vehicle_positions[vehicle_id]
+        # 如果车辆没离开depot，则选择等待 action
         if not self.vehicle_leave[vehicle_id]:
-            current_position = self.vehicle_positions[vehicle_id]
-            # 如果车辆在 dummy waiting nodes, 只能返回 depot
-            if current_position in self.wait_time_dummy_node_index_list:
-                valid_customers = [0]
-            # 如果车辆在 depot，则前往 dummy waiting nodes
-            elif current_position == 0:
-                valid_customers = self.wait_time_dummy_node_index_list
-            else:
-                raise Exception('Logic Error! Check the update of self.batch_vehicle_leave')
-
-        # 如果车辆结束，车辆 remaining capacity 为 0，或者所有用户已经访问完，则返回 depot
-        elif self.finished_vehicle[vehicle_id] or self.remaining_capacities[vehicle_id] == 0 or self.finished_customers[1:].all():
+            valid_customers = self.wait_time_dummy_node_index_list
+        # 如果车辆 remaining capacity 为 0，所有用户已经访问完，则返回 depot
+        elif (
+                self.remaining_capacities[vehicle_id] == 0 or
+                self.finished_customers[1:].all()
+        ):
             valid_customers = [0]
         else:
             valid_customers = []
+            # 如果当前位置不是等待点，则可以选择返回depot
+            if current_location not in self.wait_time_dummy_node_index_list:
+                valid_customers.append(0)
             for customer_id in range(1, self.num_customers + 1):
                 if self.finished_customers[customer_id]:
                     continue
@@ -180,7 +186,7 @@ class VRPEnv:
         Returns:
             neg_inf_mask: -inf 掩码
         """
-        neg_inf_mask = torch.full((self.num_nodes,), float('-inf'), requires_grad=False)
+        neg_inf_mask = np.full(self.num_nodes, float('-inf'))
         valid_customers = self.get_valid_actions(vehicle_id)
         neg_inf_mask[valid_customers] = 0.0
         return neg_inf_mask
@@ -195,7 +201,7 @@ class VRPEnv:
         Returns:
             reward: 奖励
         """
-        if self.finished_vehicle[vehicle_id] or action in self.wait_time_dummy_node_index_list or last_position in self.wait_time_dummy_node_index_list:
+        if action in self.wait_time_dummy_node_index_list:
             return 0.0
         distance = self.travel_time_matrix[last_position, action]
         arrive_time = self.time_elapsed[vehicle_id]
@@ -209,6 +215,9 @@ class VRPEnv:
                 reward -= customer_penalty[0] * (customer_time_window[0] - arrive_time)
             elif arrive_time > customer_time_window[1]:
                 reward -= customer_penalty[1] * (arrive_time - customer_time_window[1])
+        # 如果所有车辆已完成，则减去unmet demand惩罚
+        if self.finished_vehicle.all() and not self.finished_customers[1:].all():
+            reward += self.demand_unmet_penalty * sum(self.finished_customers[1:] == False)
 
         return reward
 
@@ -218,7 +227,7 @@ class VRPEnv:
         Returns:
             done: 是否结束
         """
-        finished = self.finished_customers[1:].all() and self.finished_vehicle.all()
+        finished = self.finished_vehicle.all()
         return bool(finished)
 
     def step(self, vehicle_id, action):
@@ -230,13 +239,13 @@ class VRPEnv:
         Returns:
             reward: 奖励
         """
+        if self.finished_vehicle[vehicle_id]:
+            return 0.0
+
         # 更新车辆位置
         last_position = self.update_vehicle_position(vehicle_id, action)
         # 计算奖励
         reward = self.calculate_reward(vehicle_id, action, last_position)
-        # 判断是否结束
-        if not self.finished_vehicle[vehicle_id] and action == 0 and last_position not in self.wait_time_dummy_node_index_list:
-            self.finished_vehicle[vehicle_id] = True
 
         return reward
 
@@ -247,6 +256,7 @@ class BatchVRPEnvs:
             batch_size,
             wait_times,
             max_workers,
+            demand_unmet_penalty,
             grid_size,
             num_customers,
             num_vehicles_choices,
@@ -270,10 +280,13 @@ class BatchVRPEnvs:
         self.num_wait_time_dummy_node = len(wait_times)
         self.max_workers = max_workers
 
+        self.demand_unmet_penalty = demand_unmet_penalty
+
         self.grid_size = grid_size
         self.num_customers = num_customers
         self.num_vehicles_choices = num_vehicles_choices
         self.vehicle_capacity_choices = vehicle_capacity_choices
+        self.vehicle_capacity = vehicle_capacity_choices[index]
         self.customer_demand_range_choices = customer_demand_range_choices
         self.time_window_range = time_window_range
         self.time_window_length = time_window_length
@@ -295,8 +308,8 @@ class BatchVRPEnvs:
                 with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
                     args = [(
                         self.grid_size, self.num_customers, self.num_vehicles_choices, self.vehicle_capacity_choices,
-                         self.customer_demand_range_choices, self.time_window_range, self.time_window_length,
-                         self.early_penalty_alpha_range, self.late_penalty_beta_range, self.index
+                        self.customer_demand_range_choices, self.time_window_range, self.time_window_length,
+                        self.early_penalty_alpha_range, self.late_penalty_beta_range, self.index
                     ) for _ in range(self.batch_size)]
                     # 并行生成
                     self.envs = list(executor.map(generate_vrp_instance, args))
@@ -320,27 +333,48 @@ class BatchVRPEnvs:
             batch_num_nodes: 每个实例的节点数量
         """
         for i, vrp_env in enumerate(self.envs):
-            vrp_env.update_parameters(batch_distance_matrices[i], batch_num_nodes[i], self.wait_times)
+            vrp_env.update_parameters(
+                batch_distance_matrices[i],
+                batch_num_nodes[i],
+                self.wait_times,
+                self.demand_unmet_penalty,
+            )
 
-    def get_current_batch_status(self):
+    def get_current_batch_status(self, return_neg_inf_mask=False):
         """
         返回当前 batch 的状态
         Returns:
             batch_status: 当前 batch 的状态
         """
-        batch_vehicle_positions = [env.vehicle_positions for env in self.envs]
-        batch_remaining_capacities = [env.remaining_capacities for env in self.envs]
-        batch_time_elapsed = [env.time_elapsed for env in self.envs]
-        batch_customer_max_time = [env.customer_max_time for env in self.envs]
-        batch_customer_remaining_demands = [env.current_customer_demands for env in self.envs]
-        return {
+        batch_vehicle_positions = []
+        batch_remaining_capacities = []
+        batch_time_elapsed = []
+        batch_customer_max_time = []
+        batch_customer_remaining_demands = []
+        batch_neg_inf_mask = []
+        for env in self.envs:
+            batch_vehicle_positions.append(env.vehicle_positions)
+            batch_remaining_capacities.append(env.remaining_capacities)
+            batch_time_elapsed.append(env.time_elapsed)
+            batch_customer_max_time.append(env.customer_max_time)
+            batch_customer_remaining_demands.append(env.current_customer_demands)
+            if return_neg_inf_mask:
+                instance_neg_inf_mask = []
+                vehicle_count = env.vehicle_count
+                for vehicle_id in range(vehicle_count):
+                    neg_inf_mask = env.return_neg_inf_mask(vehicle_id)
+                    instance_neg_inf_mask.append(neg_inf_mask)
+                instance_neg_inf_mask = np.array(instance_neg_inf_mask)
+                batch_neg_inf_mask.append(instance_neg_inf_mask)
+
+        status = {
             'batch_vehicle_positions': np.array(batch_vehicle_positions),
             'batch_remaining_capacities': np.array(batch_remaining_capacities),
             'batch_time_elapsed': np.array(batch_time_elapsed),
             'batch_customer_max_time': np.array(batch_customer_max_time),
             'batch_customer_remaining_demands': np.array(batch_customer_remaining_demands)
         }
+        if return_neg_inf_mask:
+            status['batch_neg_inf_mask'] = np.array(batch_neg_inf_mask)
 
-
-
-
+        return status

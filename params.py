@@ -1,5 +1,4 @@
 import torch
-import torch.nn.functional as F
 import numpy as np
 
 # --------------------- Computer Parameters ---------------------
@@ -10,39 +9,8 @@ project_name = 'EdgeGAT-CVRPSTW'
 
 # --------------------- Graph Parameters ---------------------
 # change the number of nearest neighbors when using different environment
-k_distance_nearest_neighbors = 2
-k_time_nearest_neighbors = 2
-
-
-# --------------------- Hyperparameters ---------------------
-# --------- encoder -----------
-
-# MultiLayerEdge
-out_feats = 128
-MultiLayerEdgeGATParams = {
-    'in_feats': 11,
-    'edge_feats': 10,
-    'units': 128,
-    'num_heads': 8,
-    'num_layers': 3,
-    'feat_drop': 0.0,
-    'attn_drop': 0.0,
-    'edge_drop': 0.0,
-    'activation': F.silu
-}
-embedding_dim = out_feats
-# --------- decoder -----------
-
-# action
-action_heads = 10
-dynamic_vehicle_dim = 2
-dynamic_customer_dim = 1
-
-# train
-epochs = 100
-
-# optimizer
-lr = 1e-4
+k_distance_nearest_neighbors_percent = 0.1
+k_time_nearest_neighbors_percent = 0.1
 
 # device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -65,7 +33,7 @@ small_params = {
     'time_window_length': -1,
     'early_penalty_alpha_range': (0.,0.2),
     'late_penalty_beta_range': (0.,1.),
-    'wait_times': np.arange(0., 31.),
+    'wait_times':  np.linspace(0, 3, 10),
     'index': 0
 }
 
@@ -80,7 +48,7 @@ medium_params = {
     'time_window_length': -1,
     'early_penalty_alpha_range': (0.,0.2),
     'late_penalty_beta_range': (0.,1.),
-    'wait_times': np.arange(0., 41.),
+    'wait_times':  np.linspace(0, 4, 20),
     'index': 0
 }
 
@@ -95,7 +63,7 @@ large_params = {
     'time_window_length': -1,
     'early_penalty_alpha_range': (0.,0.2),
     'late_penalty_beta_range': (0.,1.),
-    'wait_times': np.arange(0., 61.),
+    'wait_times':  np.linspace(0, 4, 30),
     'index': 0
 }
 
@@ -110,9 +78,12 @@ extra_large_params = {
     'time_window_length': 20.,
     'early_penalty_alpha_range': (0.1,0.1),
     'late_penalty_beta_range': (0.5,0.5),
-    'wait_times': np.arange(0., 61.),
+    'wait_times':  np.linspace(0, 4, 20),
     'index': 0
 }
+
+# --------------- Env Reward / Penalty ---------------
+demand_unmet_penalty = -1000.
 
 # --------------- Logger ----------------
 record_gradient = True
