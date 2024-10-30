@@ -93,6 +93,7 @@ class VRPEnv:
             distance_matrix: 每个实例的距离矩阵
             num_nodes: 每个实例的节点数量
             wait_times: 等待时间列表
+            demand_unmet_penalty: 未满足需求的惩罚
         """
         self.travel_time_matrix = distance_matrix
         self.num_nodes = num_nodes
