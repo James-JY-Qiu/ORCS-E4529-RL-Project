@@ -163,7 +163,6 @@ def train_model(
     loss_list = deque(maxlen=reward_window_size)
 
     env = env_generator(
-        demand_unmet_penalty=demand_unmet_penalty,
         max_workers=max_workers,
         **env_params
     )
