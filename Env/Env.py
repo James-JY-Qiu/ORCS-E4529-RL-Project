@@ -63,7 +63,6 @@ class VRPEnv:
         self.num_wait_time_dummy_node = None
         self.wait_time_dummy_node_index_list = None
         self.dummy_wait_node_index_thred = None
-        self.demand_unmet_penalty = None
 
         self.reset()  # 初始化状态
 
@@ -85,7 +84,7 @@ class VRPEnv:
         self.finished_customers = np.zeros(self.num_customers + 1, dtype=bool)
 
     def update_parameters(
-            self, distance_matrix, num_nodes, wait_times, demand_unmet_penalty
+            self, distance_matrix, num_nodes, wait_times
     ):
         """
         更新环境参数
@@ -102,8 +101,6 @@ class VRPEnv:
             self.num_customers + 1, self.num_customers + 1 + self.num_wait_time_dummy_node
         ))
         self.dummy_wait_node_index_thred = self.wait_time_dummy_node_index_list[0]
-
-        self.demand_unmet_penalty = demand_unmet_penalty
 
     def update_vehicle_position(self, vehicle_id, new_position):
         """
@@ -168,8 +165,10 @@ class VRPEnv:
             valid_customers = [0]
         else:
             valid_customers = []
-            # 如果当前位置不是等待点，则可以选择返回depot
-            if current_location not in self.wait_time_dummy_node_index_list:
+            # 如果其他车辆容量足够服务剩下的客户，则可以选择返回depot
+            total_remaining_demands = self.current_customer_demands[1:].sum()
+            total_other_vehicles_capacities = self.remaining_capacities.sum() - self.remaining_capacities[vehicle_id]
+            if total_remaining_demands <= total_other_vehicles_capacities:
                 valid_customers.append(0)
             for customer_id in range(1, self.num_customers + 1):
                 if self.finished_customers[customer_id]:
@@ -215,9 +214,6 @@ class VRPEnv:
                 reward -= customer_penalty[0] * (customer_time_window[0] - arrive_time)
             elif arrive_time > customer_time_window[1]:
                 reward -= customer_penalty[1] * (arrive_time - customer_time_window[1])
-        # 如果所有车辆已完成，则减去unmet demand惩罚
-        if self.finished_vehicle.all() and not self.finished_customers[1:].all():
-            reward += self.demand_unmet_penalty * sum(self.finished_customers[1:] == False)
 
         return reward
 
@@ -256,7 +252,6 @@ class BatchVRPEnvs:
             batch_size,
             wait_times,
             max_workers,
-            demand_unmet_penalty,
             grid_size,
             num_customers,
             num_vehicles_choices,
@@ -279,8 +274,6 @@ class BatchVRPEnvs:
         self.dummy_wait_node_index_thred = num_customers + 1
         self.num_wait_time_dummy_node = len(wait_times)
         self.max_workers = max_workers
-
-        self.demand_unmet_penalty = demand_unmet_penalty
 
         self.grid_size = grid_size
         self.num_customers = num_customers
@@ -337,7 +330,6 @@ class BatchVRPEnvs:
                 batch_distance_matrices[i],
                 batch_num_nodes[i],
                 self.wait_times,
-                self.demand_unmet_penalty,
             )
 
     def get_current_batch_status(self, return_neg_inf_mask=False):
