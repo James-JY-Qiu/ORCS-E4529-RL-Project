@@ -83,9 +83,6 @@ extra_large_params = {
     'index': 0
 }
 
-# --------------- Env Reward / Penalty ---------------
-demand_unmet_penalty = -1000.
-
 # --------------- Logger ----------------
 record_gradient = True
 reward_window_size = 100

@@ -19,7 +19,6 @@ from train_model.train_utils import return_batch_neg_inf_masks, batch_steps, rec
 
 from params import project_name, max_workers, device
 from params import small_params, num_samll_instances
-from params import demand_unmet_penalty
 from params import k_distance_nearest_neighbors_percent, k_time_nearest_neighbors_percent
 from params import record_gradient, reward_window_size
 
@@ -55,7 +54,7 @@ dynamic_customer_dim = 1
 epochs = 100
 
 # optimizer
-lr = 1e-4
+lr = 1e-3
 
 
 def run_batch(env, encoder, action_selector, mode, generate, device):
