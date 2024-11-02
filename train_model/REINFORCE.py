@@ -54,7 +54,7 @@ dynamic_customer_dim = 1
 epochs = 100
 
 # optimizer
-lr = 1e-3
+lr = 1e-4
 
 
 def run_batch(env, encoder, action_selector, mode, generate, device):

@@ -85,7 +85,6 @@ class ActionSelector(nn.Module):
         Args:
             action_probs: 动作概率矩阵 (batch_size, M, N)
             mode: 动作选择的模式，'greedy' 或 'sampling'
-            depot_index: depot的索引
         Returns:
             selected_actions: 选择的客户索引 (batch_size, M)
             log_probs: 对数概率 (在sampling模式下)
