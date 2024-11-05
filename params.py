@@ -34,7 +34,7 @@ small_params = {
     'early_penalty_alpha_range': (0.,0.2),
     'late_penalty_beta_range': (0.,1.),
     'wait_times':  np.linspace(0, 3, 10),
-    'demand_unmet_penalty': -2 * np.sqrt(10 ** 2 * 2),
+    'demand_unmet_penalty': -100,
     'index': 0
 }
 

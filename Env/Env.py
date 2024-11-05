@@ -170,18 +170,25 @@ class VRPEnv:
             valid_customers = [0]
         else:
             valid_customers = []
-            # 如果其他车辆容量足够服务剩下的客户，则可以选择返回depot
-            total_remaining_demands = self.current_customer_demands[1:].sum()
-            total_other_active_vehicles_capacities = sum(
-                [self.remaining_capacities[v] for v in range(self.vehicle_count)
-                 if not self.finished_vehicle[v] and v != vehicle_id]
-            )
-            if total_remaining_demands <= total_other_active_vehicles_capacities:
-                valid_customers.append(0)
+            # 如果其他车辆容量足够服务剩下的客户，并且自身容量不足10%，则可以选择返回depot
+            if self.remaining_capacities[vehicle_id] < self.vehicle_capacity * 0.1:
+                total_remaining_demands = self.current_customer_demands[1:].sum()
+                total_other_active_vehicles_capacities = sum(
+                    [self.remaining_capacities[v] for v in range(self.vehicle_count)
+                     if not self.finished_vehicle[v] and v != vehicle_id]
+                )
+                if total_remaining_demands <= total_other_active_vehicles_capacities:
+                    valid_customers.append(0)
             for customer_id in range(1, self.num_customers + 1):
                 if self.finished_customers[customer_id]:
                     continue
-                valid_customers.append(customer_id)
+                # 如果剩余容量足够服务该客户，则加入到valid_customers
+                if self.current_customer_demands[customer_id] <= self.remaining_capacities[vehicle_id]:
+                    valid_customers.append(customer_id)
+
+            # 如果没有合法客户，则返回 depot
+            if not valid_customers:
+                valid_customers.append(0)
 
         return valid_customers
 
