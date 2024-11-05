@@ -90,6 +90,7 @@ class ActionSelector(nn.Module):
             log_probs: 对数概率 (在sampling模式下)
         """
         log_probs = None
+        entropy = None
         if mode == 'greedy':
             # 选择概率最大的客户索引
             selected_actions = torch.argmax(action_probs, dim=2)
@@ -107,10 +108,12 @@ class ActionSelector(nn.Module):
             prob_mask.scatter_(1, sampled_actions, 1)
             selected_probs = (action_probs_flat * prob_mask).sum(dim=1, keepdim=True).view(batch_size, M)
             log_probs = torch.log(selected_probs)  # (batch_size, M)
+            # 计算熵
+            entropy = -torch.sum(action_probs * torch.log(action_probs + 1e-10), dim=2)  # (batch_size, M)
         else:
             raise ValueError("Mode must be 'greedy' or 'sampling'")
 
-        return selected_actions, log_probs
+        return selected_actions, log_probs, entropy
 
     def forward(self, batch_vehicle_state_embeddings, batch_customer_state_embeddings, neg_inf_mask, mode='greedy'):
         """
@@ -157,6 +160,6 @@ class ActionSelector(nn.Module):
         action_probs = self.compute_batch_action_probabilities(masked_scores)
 
         # 7. 根据模式选择动作
-        selected_actions, log_probs = self.select_batch_action(action_probs, mode)
+        selected_actions, log_probs, entropy = self.select_batch_action(action_probs, mode)
 
-        return selected_actions, log_probs
+        return selected_actions, log_probs, entropy

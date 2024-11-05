@@ -55,6 +55,7 @@ epochs = 100
 
 # optimizer
 lr = 1e-4
+entropy_weight = 0.01
 
 
 def run_batch(env, encoder, action_selector, mode, generate, device):
@@ -74,15 +75,17 @@ def run_batch(env, encoder, action_selector, mode, generate, device):
     reward_info = torch.zeros(batch_size, dtype=torch.float, device=device)
     # 记录 log_probs
     log_probs_info = torch.zeros(batch_size, dtype=torch.float, device=device)
+    # 记录 entropy
+    entropy_info = torch.zeros(batch_size, dtype=torch.float, device=device)
     # 记录时间步
     t = 0
     while not instance_status.all():
         current_batch_status = env.get_current_batch_status()
         current_vehicle_embeddings, current_customer_embeddings = encoder.get_current_batch_state(
-            include_global=False, **current_batch_status
+            include_global=False, include_remaining_demands=True, **current_batch_status
         )
         batch_neg_inf_mask = return_batch_neg_inf_masks(env).to(device)
-        actions, log_probs = action_selector(
+        actions, log_probs, entropy = action_selector(
             current_vehicle_embeddings,
             current_customer_embeddings,
             batch_neg_inf_mask,
@@ -90,6 +93,8 @@ def run_batch(env, encoder, action_selector, mode, generate, device):
         )
         if log_probs is not None:
             log_probs_info = log_probs_info + log_probs.sum(dim=-1)
+        if entropy is not None:
+            entropy_info = entropy_info + entropy.sum(dim=-1)
 
         # 执行选择的动作，并更新环境
         actions = actions.detach().cpu().numpy()
@@ -99,7 +104,7 @@ def run_batch(env, encoder, action_selector, mode, generate, device):
         # print(f"{t} finished number: {instance_status.sum().item()}")
         t += 1
 
-    return reward_info, log_probs_info
+    return reward_info, log_probs_info, entropy_info
 
 
 # Define the training function based on Algorithm 1
@@ -115,7 +120,8 @@ def train_model(
         device,
         max_workers,
         record_gradient,
-        reward_window_size
+        reward_window_size,
+        entropy_weight
 ):
     """
     Training loop for the MAAM model using GAT encoder.
@@ -171,14 +177,14 @@ def train_model(
             # ============================= Strategy Gradient =============================
             # 1. sampling run
             set_model_status([encoder, action_selector], training=True)
-            sampling_reward, log_probs_info = run_batch(
+            sampling_reward, log_probs_info, entropy_info = run_batch(
                 env, encoder, action_selector,
                 mode='sampling', generate=True, device=device
             )
             # 2. greedy run
             with torch.no_grad():
                 set_model_status([encoder, action_selector], training=False)
-                greedy_reward, _, = run_batch(
+                greedy_reward, _, _ = run_batch(
                     env, baseline_encoder, baseline_action_selector,
                     mode='greedy', generate=False, device=device
                 )
@@ -190,7 +196,7 @@ def train_model(
             else:
                 standardize_advantage = advantage
             # 4. 计算loss
-            expected_rewards = (log_probs_info * standardize_advantage).mean()
+            expected_rewards = (log_probs_info * standardize_advantage + entropy_weight * entropy_info).mean()
             loss = -expected_rewards
             # 5. 清除上次计算的梯度
             optimizer.zero_grad()
@@ -330,7 +336,8 @@ if __name__ == '__main__':
             device=device,
             max_workers=max_workers,
             record_gradient=record_gradient,
-            reward_window_size=reward_window_size
+            reward_window_size=reward_window_size,
+            entropy_weight=entropy_weight
         )
     except Exception as e:
         # 捕获手动中断，进行清理操作

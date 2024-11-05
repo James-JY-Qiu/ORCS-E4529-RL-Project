@@ -74,7 +74,8 @@ class Encoder(nn.Module):
             batch_time_elapsed,
             batch_customer_max_time,
             batch_customer_remaining_demands,
-            include_global=True
+            include_global=True,
+            include_remaining_demands=True
     ):
         """
         获取batch中所有instances的所有车辆和客户的当前状态
@@ -85,6 +86,7 @@ class Encoder(nn.Module):
             batch_customer_max_time: 客户的最大时间
             batch_customer_remaining_demands: 客户的剩余需求
             include_global: 是否包含全局静态信息
+            include_remaining_demands: 是否包含客户的剩余需求
         Returns:
             current_state: 当前的状态，包括每辆车和未完成客户的信息
         """
@@ -127,18 +129,21 @@ class Encoder(nn.Module):
 
         # (2) (batch_size, N, embedding_dims + 1)
         # Customer positions embeddings
-        customer_demands = torch.tensor(
-            batch_customer_remaining_demands, dtype=tensor_dtype, device=self.device
-        ).unsqueeze(-1)  # shape (batch_size, num_positions, 1)
-        wait_time_node_context = torch.zeros(
-            batch_size, self.num_wait_time_dummy_node, 1,
-            dtype=tensor_dtype, device=self.device
-        )  # shape (batch_size, num_wait_dummy_nodes, 1)
-        customer_new_context = torch.cat((
-            customer_demands, wait_time_node_context
-        ), dim=1)  # shape (batch_size, num_positions, 1)
-        current_customer_embeddings = torch.cat((
-            self.batch_encode_node_features, customer_new_context
-        ), dim=2)  # shape (batch_size, num_positions, embedding_dims + 1)
+        if include_remaining_demands:
+            customer_demands = torch.tensor(
+                batch_customer_remaining_demands, dtype=tensor_dtype, device=self.device
+            ).unsqueeze(-1)  # shape (batch_size, num_positions, 1)
+            wait_time_node_context = torch.zeros(
+                batch_size, self.num_wait_time_dummy_node, 1,
+                dtype=tensor_dtype, device=self.device
+            )  # shape (batch_size, num_wait_dummy_nodes, 1)
+            customer_new_context = torch.cat((
+                customer_demands, wait_time_node_context
+            ), dim=1)  # shape (batch_size, num_positions, 1)
+            current_customer_embeddings = torch.cat((
+                self.batch_encode_node_features, customer_new_context
+            ), dim=2)  # shape (batch_size, num_positions, embedding_dims + 1)
+        else:
+            current_customer_embeddings = self.batch_encode_node_features
 
         return current_vehicle_embeddings, current_customer_embeddings
