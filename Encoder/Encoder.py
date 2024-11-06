@@ -113,10 +113,13 @@ class Encoder(nn.Module):
 
         # 1.2 Combine global and vehicles embeddings: shape (batch_size, 1 + num_vehicles, embedding_dims + 2)
         if include_global:
+            batch_customer_remaining_demands_tensor = torch.tensor(
+                batch_customer_remaining_demands, dtype=tensor_dtype, device=self.device
+            ).unsqueeze(-1)
             # 1.1 Global embedding part: shape (batch_size, 1, embedding_dims + 2)
-            global_remaining_capacity = batch_remaining_capacities_tensor.sum(dim=1, keepdim=True)  # shape (batch_size, 1)
+            global_remaining_demand = batch_customer_remaining_demands_tensor.sum(dim=1)  # shape (batch_size, 1)
             global_context = torch.cat((
-                global_remaining_capacity, batch_customer_max_time_tensor.unsqueeze(-1)), dim=-1
+                global_remaining_demand, batch_customer_max_time_tensor.unsqueeze(-1)), dim=-1
             )  # shape (batch_size, 2)
             global_embedding = torch.cat((
                 self.batch_global_embedding.unsqueeze(1), global_context.unsqueeze(1)
