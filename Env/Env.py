@@ -269,7 +269,7 @@ class VRPEnv:
         # 如果所有车辆已完成，则减去unmet demand惩罚
         # If all vehicles have been completed, subtract the unmet demand penalty
         if self.finished_vehicle.all() and not self.finished_customers[1:].all():
-            reward += self.demand_unmet_penalty * sum(self.finished_customers[1:] == False)
+            reward -= self.demand_unmet_penalty * sum(self.finished_customers[1:] == False)
 
         return reward
 
