@@ -39,11 +39,13 @@ class MultiLayerEdgeGAT(nn.Module):
 
     def forward(self, g):
         # 从图中提取出节点特征和边特征
-        x = g.ndata['features']  # 获取 batched 图的节点特征
-        w = g.edata['edge_features']  # 获取 batched 图的边特征
+        # Features are stored as a tensor in the field named 'features' and 'edge_features' in the graph.
+        x = g.ndata['features']  # 获取 batched 图的节点特征 get node features of the batched graph
+        w = g.edata['edge_features']  # 获取 batched 图的边特征 get edge features of the batched graph
 
         for i in range(self.num_layers):
             # 每一层都传递图、节点特征和边特征
+            # Each layer takes the graph, node features and edge features as input
             x = self.edge_gat[i](g, x, w).flatten(1)
 
-        return x  # 返回最终输出，形状为 (num_nodes, num_heads * hidden_dim) 或 (num_nodes, out_feats)
+        return x  # 返回最终输出，形状为 (num_nodes, num_heads * hidden_dim) 或 (num_nodes, out_feats) return the final output, with shape (num_nodes, num_heads * hidden_dim) or (num_nodes, out_feats)

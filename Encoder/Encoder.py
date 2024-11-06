@@ -15,10 +15,10 @@ class Encoder(nn.Module):
             device
     ):
         """
-        :param encoder_model: 编码器模型
-        :param encoder_params: 编码器参数
-        :k_num_nearest_neighbors: 节点的最近邻节点数量
-        :param device: 设备
+        :param encoder_model: 编码器模型 encoder_model
+        :param encoder_params: 编码器参数 encoder_params
+        :k_num_nearest_neighbors: 节点的最近邻节点数量 k_num_nearest_neighbors
+        :param device: 设备 device
         """
         super(Encoder, self).__init__()
         self.encoder = encoder_model(**encoder_params)
@@ -27,6 +27,7 @@ class Encoder(nn.Module):
         self.device = device
 
         # 所有存储变量
+        # Store all variables
         self.num_wait_time_dummy_node = None
         self.batch_graphs = None
         self.batch_node_features = None
@@ -59,12 +60,16 @@ class Encoder(nn.Module):
         batch_graphs = dgl.batch(self.batch_graphs).to(self.device)
         batch_encode_node_features = self.encoder(batch_graphs)  # (total_num_nodes, embedding_dims)
         # 获取每个图的节点数量
+        # Get the number of nodes for each graph
         self.batch_num_nodes = [g.number_of_nodes() for g in self.batch_graphs]
         # 将节点特征重新拆分成每个图的特征
+        # Split the node features back into the features of each graph
         self.batch_encode_node_features = torch.split(batch_encode_node_features, self.batch_num_nodes)
         # 将分割后的特征拼接为形状为 (batch_size, num_nodes, embedding_dims)
+        # Concatenate the split features into shape (batch_size, num_nodes, embedding_dims)
         self.batch_encode_node_features = torch.stack(self.batch_encode_node_features)
         # 计算全局embedding (batch_size, embedding_dims)
+        # Calculate global embedding (batch_size, embedding_dims)
         self.batch_global_embedding = torch.mean(self.batch_encode_node_features, dim=1)
 
     def get_current_batch_state(
@@ -79,16 +84,17 @@ class Encoder(nn.Module):
     ):
         """
         获取batch中所有instances的所有车辆和客户的当前状态
+        Get the current state of all vehicles and customers in all instances in the batch
         Args:
-            batch_vehicle_positions: 车辆的位置
-            batch_remaining_capacities: 车辆的剩余容量
-            batch_time_elapsed: 车辆的已用时间
-            batch_customer_max_time: 客户的最大时间
-            batch_customer_remaining_demands: 客户的剩余需求
-            include_global: 是否包含全局静态信息
-            include_remaining_demands: 是否包含客户的剩余需求
+            batch_vehicle_positions: 车辆的位置 Current positions of the vehicles
+            batch_remaining_capacities: 车辆的剩余容量 Remaining capacities of the vehicles
+            batch_time_elapsed: 车辆的已用时间 Time elapsed for the vehicles
+            batch_customer_max_time: 客户的最大时间 Maximum time for the customers
+            batch_customer_remaining_demands: 客户的剩余需求 Remaining demands of the customers
+            include_global: 是否包含全局静态信息 whether to include global static information
+            include_remaining_demands: 是否包含客户的剩余需求 whether to include the remaining demands of the customers
         Returns:
-            current_state: 当前的状态，包括每辆车和未完成客户的信息
+            current_state: 当前的状态，包括每辆车和未完成客户的信息 Current state, including information of each vehicle and uncompleted customers
         """
         batch_size = len(batch_vehicle_positions)
         tensor_dtype = self.batch_global_embedding.dtype

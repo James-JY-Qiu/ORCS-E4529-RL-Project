@@ -36,6 +36,7 @@ def generate_instance(
         demand = np.random.uniform(customer_demand_range[0], customer_demand_range[1], size=(num_customers,))
 
     # 合并所有信息
+    # merge all the information
     customer_data = {
         "Customer_ID": np.arange(1, num_customers + 1),
         "X": customers[:, 0],
@@ -59,6 +60,7 @@ def generate_instance(
     customer_df['Is_customer'] = 1
 
     # 将仓库数据和客户数据合并
+    # merge the depot data and customer data
     customer_df = pd.concat([pd.DataFrame(depot, columns=['X', 'Y']), customer_df], ignore_index=True)
     customer_df.fillna(0, inplace=True)
     customer_df.iloc[0, 5] = company_data['Max_Time']
