@@ -45,7 +45,6 @@ class VRPEnv:
         self.vehicle_capacity = company_data['Vehicle_Capacity']
         self.customer_demands = customer_data['Demand'].values
         self.customer_time_windows = customer_data[['Start_Time_Window', 'End_Time_Window']].values
-        self.customer_max_time = customer_data['End_Time_Window'].max()
         self.customer_service_times = customer_data['Service_Time'].values
         self.customer_penalties = customer_data[['Alpha', 'Beta']].values
 
@@ -148,6 +147,18 @@ class VRPEnv:
                     self.finished_customers[new_position] = True
 
         return last_position
+
+    def get_current_customer_max_time(self):
+        """
+        获取当前客户的最大时间
+        :return: 当前剩余客户的最大时间
+        """
+        max_time = 0
+        for customer_id in range(1, self.num_customers + 1):
+            if not self.finished_customers[customer_id]:
+                max_time = max(max_time, self.customer_time_windows[customer_id][1])
+
+        return max_time
 
     def get_valid_actions(self, vehicle_id):
         """
@@ -370,7 +381,7 @@ class BatchVRPEnvs:
             batch_vehicle_positions.append(env.vehicle_positions)
             batch_remaining_capacities.append(env.remaining_capacities)
             batch_time_elapsed.append(env.time_elapsed)
-            batch_customer_max_time.append(env.customer_max_time)
+            batch_customer_max_time.append(env.get_current_customer_max_time())
             batch_customer_remaining_demands.append(env.current_customer_demands)
             if return_neg_inf_mask:
                 instance_neg_inf_mask = []

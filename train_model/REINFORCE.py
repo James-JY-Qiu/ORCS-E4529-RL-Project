@@ -82,7 +82,7 @@ def run_batch(env, encoder, action_selector, mode, generate, device):
     while not instance_status.all():
         current_batch_status = env.get_current_batch_status()
         current_vehicle_embeddings, current_customer_embeddings = encoder.get_current_batch_state(
-            include_global=False, include_remaining_demands=True, **current_batch_status
+            include_global=True, include_remaining_demands=False, **current_batch_status
         )
         batch_neg_inf_mask = return_batch_neg_inf_masks(env).to(device)
         actions, log_probs, entropy = action_selector(

@@ -22,13 +22,13 @@ class ActionSelector(nn.Module):
 
         # 车辆全连接层，用于车辆维度改变
         self.fc_vehicle = nn.Linear(embedding_dim + dynamic_vehicle_dim, embedding_dim)
-        # 顾客全连接层，用于顾客维度改变
-        self.fc_customer = nn.Linear(embedding_dim + dynamic_customer_dim, embedding_dim)
+        # # 顾客全连接层，用于顾客维度改变
+        # self.fc_customer = nn.Linear(embedding_dim + dynamic_customer_dim, embedding_dim)
 
         # 多头注意力层，用于计算车辆自注意力
         self.mha_vehicles = nn.MultiheadAttention(embed_dim=embedding_dim, num_heads=heads, batch_first=True)
-        # 多头注意力层，用于计算车辆-环境交叉注意力
-        self.mha_vehicles_env = nn.MultiheadAttention(embed_dim=embedding_dim, num_heads=heads, batch_first=True)
+        # # 多头注意力层，用于计算车辆-环境交叉注意力
+        # self.mha_vehicles_env = nn.MultiheadAttention(embed_dim=embedding_dim, num_heads=heads, batch_first=True)
 
         # 查询权重矩阵 W_Q 和 键权重矩阵 W_K
         self.W_Q = nn.Linear(embedding_dim, embedding_dim, bias=False)
@@ -129,24 +129,32 @@ class ActionSelector(nn.Module):
         """
         # 0. 维度改变
         batch_vehicle_state_embeddings = self.fc_vehicle(batch_vehicle_state_embeddings)
-        batch_customer_state_embeddings = self.fc_customer(batch_customer_state_embeddings)
+        # batch_customer_state_embeddings = self.fc_customer(batch_customer_state_embeddings)
+        #
+        # # 1. 使用多头注意力机制计算 new_batch_vehicle_status_embeddings
+        # vehicle_self_attn, _ = self.mha_vehicles(
+        #     batch_vehicle_state_embeddings,
+        #     batch_vehicle_state_embeddings,
+        #     batch_vehicle_state_embeddings
+        # )  # (batch_size, M, embedding_dim)
+        #
+        # # 2. 使用多头注意力机制计算车辆-环境交叉注意力
+        # vehicle_env_attn, _ = self.mha_vehicles_env(
+        #     vehicle_self_attn,
+        #     batch_customer_state_embeddings,
+        #     batch_customer_state_embeddings
+        # )  # (batch_size, M, embedding_dim)
+        #
+        # # 3. 计算车辆嵌入
+        # vehicle_embeddings = vehicle_self_attn + vehicle_env_attn
 
-        # 1. 使用多头注意力机制计算 new_batch_vehicle_status_embeddings
+        # 3. 计算车辆嵌入
         vehicle_self_attn, _ = self.mha_vehicles(
             batch_vehicle_state_embeddings,
             batch_vehicle_state_embeddings,
             batch_vehicle_state_embeddings
-        )  # (batch_size, M, embedding_dim)
-
-        # 2. 使用多头注意力机制计算车辆-环境交叉注意力
-        vehicle_env_attn, _ = self.mha_vehicles_env(
-            vehicle_self_attn,
-            batch_customer_state_embeddings,
-            batch_customer_state_embeddings
-        )  # (batch_size, M, embedding_dim)
-
-        # 3. 计算车辆嵌入
-        vehicle_embeddings = vehicle_self_attn + vehicle_env_attn
+        )
+        vehicle_embeddings = vehicle_self_attn[:, 1:]
 
         # 4. 计算兼容性分数
         compatibility_scores = self.compute_batch_compatibility(
