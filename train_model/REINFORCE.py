@@ -54,7 +54,7 @@ dynamic_customer_dim = 1
 epochs = 100
 min_temp = 1.
 max_temp = 10.
-decay_epochs = 100
+decay_epochs = 80
 
 # optimizer
 lr = 1e-4
