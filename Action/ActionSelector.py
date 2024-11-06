@@ -77,18 +77,17 @@ class ActionSelector(nn.Module):
         masked_scores = compatibility_scores + neg_inf_mask
         return masked_scores
 
-    def compute_batch_action_probabilities(self, masked_scores, current_temp):
+    def compute_batch_action_probabilities(self, masked_scores):
         """
         通过softmax计算动作概率
         Compute action probabilities using softmax
         Args:
             masked_scores: 应用掩码后的兼容性分数 (batch_size, M, N) Compatibility scores after applying mask
-            current_temp: 当前温度 Current temperature
         Returns:
             action_probs: 动作概率矩阵 (batch_size, M, N) Action probability matrix
         """
         # 对每辆车的分数进行 softmax
-        action_probs = F.softmax(masked_scores/current_temp, dim=2)
+        action_probs = F.softmax(masked_scores, dim=2)
         return action_probs
 
     def select_batch_action(self, action_probs, mode):
@@ -130,12 +129,21 @@ class ActionSelector(nn.Module):
             # 计算熵
             # Calculate entropy
             entropy = -torch.sum(action_probs * torch.log(action_probs + 1e-10), dim=2)  # (batch_size, M)
+            # 计算车辆主动返回depot的个数
+            # Calculate the number of vehicles that actively return to the depot
+            valid_active_return_vehicles = torch.sum(action_probs_flat != 0, dim=-1, dtype=torch.long)  # (batch_size * M,)
+            valid_active_return_vehicles = (valid_active_return_vehicles > 1).view(batch_size, M)  # (batch_size, M)
+            num_return_depot = torch.sum(selected_actions[valid_active_return_vehicles] == 0, dtype=torch.long).item()
+            if num_return_depot > 0:
+                print("Number of vehicles that actively return to the depot: ", num_return_depot)
         else:
             raise ValueError("Mode must be 'greedy' or 'sampling'")
 
+
+
         return selected_actions, log_probs, entropy
 
-    def forward(self, batch_vehicle_state_embeddings, batch_customer_state_embeddings, neg_inf_mask, current_temp, mode='greedy'):
+    def forward(self, batch_vehicle_state_embeddings, batch_customer_state_embeddings, neg_inf_mask, mode='greedy'):
         """
         处理动作选择的完整流程
         Process the entire flow of action
@@ -143,7 +151,6 @@ class ActionSelector(nn.Module):
             batch_vehicle_state_embeddings: 车辆当前状态嵌入矩阵 (batch_size, M, embedding_dim) Vehicle current state embedding matrix
             batch_customer_state_embeddings: 顾客当前状态嵌入矩阵 (batch_size, N, embedding_dim) Customer current state embedding matrix
             neg_inf_mask: -inf mask (batch_size, M, N) -inf mask
-            current_temp: 当前温度 Current temperature
             mode: 选择动作的模式，'greedy' 或 'sampling' Mode of action selection, 'greedy' or 'sampling'
         Returns:
             selected_actions: 选择的客户索引 (batch_size, M) Selected customer indices
@@ -192,7 +199,7 @@ class ActionSelector(nn.Module):
 
         # 6. 通过 softmax 计算动作概率
         # 6. Compute action probabilities
-        action_probs = self.compute_batch_action_probabilities(masked_scores, current_temp)
+        action_probs = self.compute_batch_action_probabilities(masked_scores)
 
         # 7. 根据模式选择动作
         # 7. Select actions based on mode

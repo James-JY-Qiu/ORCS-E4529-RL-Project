@@ -52,16 +52,13 @@ dynamic_customer_dim = 1
 
 # train
 epochs = 100
-min_temp = 1.
-max_temp = 10.
-decay_epochs = 80
 
 # optimizer
 lr = 1e-4
 entropy_weight = 0.01
 
 
-def run_batch(env, encoder, action_selector, mode, generate, current_temp, device):
+def run_batch(env, encoder, action_selector, mode, generate, device):
     """
     执行一次完整的 sampling batch (即跑完一遍所有的 instances)
     Execute a complete sampling batch (i.e., run all instances once).
@@ -98,7 +95,6 @@ def run_batch(env, encoder, action_selector, mode, generate, current_temp, devic
             current_vehicle_embeddings,
             current_customer_embeddings,
             batch_neg_inf_mask,
-            current_temp=current_temp,
             mode=mode
         )
         if log_probs is not None:
@@ -132,9 +128,6 @@ def train_model(
         record_gradient,
         reward_window_size,
         entropy_weight,
-        min_temp,
-        max_temp,
-        temp_decay_steps,
 ):
     """
     Training loop for the MAAM model using GAT encoder.
@@ -153,9 +146,6 @@ def train_model(
         record_gradient: 是否记录梯度 whether to record gradients
         reward_window_size: 奖励窗口大小 reward window size
         entropy_weight: 熵权重 entropy weight
-        min_temp: 最小温度
-        max_temp: 最大温度
-        temp_decay_steps: 温度降低步数
     """
     env_name, env_params, total_num_instances = env_params
     batch_size = env_params['batch_size']
@@ -189,9 +179,6 @@ def train_model(
         **env_params
     )
 
-    current_temp = max_temp
-    temp_decay_rate = (max_temp - min_temp) / temp_decay_steps
-
     for epoch in tqdm(range(epochs)):
         for batch_id in tqdm(range(batch_times)):
             # ============================= Strategy Gradient =============================
@@ -199,14 +186,14 @@ def train_model(
             set_model_status([encoder, action_selector], training=True)
             sampling_reward, log_probs_info, entropy_info = run_batch(
                 env, encoder, action_selector,
-                current_temp=current_temp, mode='sampling', generate=True, device=device
+                mode='sampling', generate=True, device=device
             )
             # 2. greedy run
             with torch.no_grad():
                 set_model_status([encoder, action_selector], training=False)
                 greedy_reward, _, _ = run_batch(
                     env, baseline_encoder, baseline_action_selector,
-                    current_temp=current_temp, mode='greedy', generate=False, device=device
+                    mode='greedy', generate=False, device=device
                 )
             # 3. 计算差值
             # calculate advantage
@@ -274,8 +261,7 @@ def train_model(
                 "wilcoxon_stat": wilcoxon_results.statistic,
                 "wilcoxon_p_value": wilcoxon_results.pvalue,
                 "encoder_gradients": encoder_gradients,
-                "action_selector_gradients": action_selector_gradients,
-                "current_temperature": current_temp
+                "action_selector_gradients": action_selector_gradients
             }
 
             if reward_window_size > 0 and batch_id > reward_window_size:
@@ -290,7 +276,7 @@ def train_model(
             if sampling_reward_mean >= greedy_reward_mean and wilcoxon_results.pvalue < 0.05:
                 replace_baseline_model(baseline_encoder, encoder)
                 replace_baseline_model(baseline_action_selector, action_selector)
-                print("更新Baseline策略！")
+                print("Update baseline model.")
 
             # 11. 保存模型
             # save model
@@ -299,7 +285,7 @@ def train_model(
                 torch.save(baseline_encoder.state_dict(), f'models/check_point_baseline_encoder.pth')
                 torch.save(action_selector.state_dict(), f'models/check_point_action_selector.pth')
                 torch.save(baseline_action_selector.state_dict(), f'models/check_point_baseline_action_selector.pth')
-                print("模型已保存！")
+                print("Models have been saved.")
 
             print(
                 f"Batch ID: {batch_id}, "
@@ -309,16 +295,11 @@ def train_model(
                 f"Wilcoxon Stat: {wilcoxon_results.statistic}, P-value: {wilcoxon_results.pvalue}"
             )
 
-            # 12. 更新温度
-            # update temperature
-            current_temp = max(min_temp, current_temp - temp_decay_rate)
-
             # ============================= End Strategy Gradient =============================
 
 
 if __name__ == '__main__':
     ENV_PARAMS = ('small', small_params, num_samll_instances)
-    temp_decay_steps = ENV_PARAMS[2] / ENV_PARAMS[1]['batch_size'] * decay_epochs
 
     # encoder
     encoder = Encoder(
@@ -373,9 +354,6 @@ if __name__ == '__main__':
             record_gradient=record_gradient,
             reward_window_size=reward_window_size,
             entropy_weight=entropy_weight,
-            min_temp=min_temp,
-            max_temp=max_temp,
-            temp_decay_steps=temp_decay_steps
         )
     except Exception as e:
         # 捕获手动中断，进行清理操作
