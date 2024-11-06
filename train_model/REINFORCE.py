@@ -274,7 +274,8 @@ def train_model(
                 "wilcoxon_stat": wilcoxon_results.statistic,
                 "wilcoxon_p_value": wilcoxon_results.pvalue,
                 "encoder_gradients": encoder_gradients,
-                "action_selector_gradients": action_selector_gradients
+                "action_selector_gradients": action_selector_gradients,
+                "current_temp": current_temp
             }
 
             if reward_window_size > 0 and batch_id > reward_window_size:
