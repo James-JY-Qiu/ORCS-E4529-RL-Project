@@ -189,7 +189,7 @@ def train_model(
         **env_params
     )
 
-    current_temp = min_temp
+    current_temp = max_temp
     temp_decay_rate = (max_temp - min_temp) / temp_decay_steps
 
     for epoch in tqdm(range(epochs)):
@@ -275,7 +275,7 @@ def train_model(
                 "wilcoxon_p_value": wilcoxon_results.pvalue,
                 "encoder_gradients": encoder_gradients,
                 "action_selector_gradients": action_selector_gradients,
-                "current_temp": current_temp
+                "current_temperature": current_temp
             }
 
             if reward_window_size > 0 and batch_id > reward_window_size:
@@ -311,7 +311,7 @@ def train_model(
 
             # 12. 更新温度
             # update temperature
-            current_temp = min(max_temp, current_temp + temp_decay_rate)
+            current_temp = max(min_temp, current_temp - temp_decay_rate)
 
             # ============================= End Strategy Gradient =============================
 
