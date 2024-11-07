@@ -139,8 +139,6 @@ class ActionSelector(nn.Module):
         else:
             raise ValueError("Mode must be 'greedy' or 'sampling'")
 
-
-
         return selected_actions, log_probs, entropy
 
     def forward(self, batch_vehicle_state_embeddings, batch_customer_state_embeddings, neg_inf_mask, mode='greedy'):
