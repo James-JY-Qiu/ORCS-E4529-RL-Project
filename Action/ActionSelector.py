@@ -61,6 +61,9 @@ class ActionSelector(nn.Module):
         # 使用 einsum 来计算兼容性分数，等效于 torch.matmul(q_c, k.transpose(-1, -2))
         # Use einsum to compute compatibility scores, equivalent to torch.matmul(q_c, k.transpose(-1, -2))
         compatibility_scores = torch.einsum('bme,bne->bmn', q_c, k) / self.sqrt_d_k
+        # 使用 tanh 激活函数
+        # Use tanh activation function
+        compatibility_scores = torch.tanh(compatibility_scores)
 
         return compatibility_scores  # 返回 (batch_size, M, N) 的相似度矩阵  return similarity matrix of shape (batch_size, M, N)
 
@@ -129,13 +132,13 @@ class ActionSelector(nn.Module):
             # 计算熵
             # Calculate entropy
             entropy = -torch.sum(action_probs * torch.log(action_probs + 1e-10), dim=2)  # (batch_size, M)
-            # 计算车辆主动返回depot的个数
-            # Calculate the number of vehicles that actively return to the depot
-            valid_active_return_vehicles = torch.sum(action_probs_flat != 0, dim=-1, dtype=torch.long)  # (batch_size * M,)
-            valid_active_return_vehicles = (valid_active_return_vehicles > 1).view(batch_size, M)  # (batch_size, M)
-            num_return_depot = torch.sum(selected_actions[valid_active_return_vehicles] == 0, dtype=torch.long).item()
-            if num_return_depot > 0:
-                print("Number of vehicles that actively return to the depot: ", num_return_depot)
+            # 计算车辆选择不直接出发的个数
+            # Calculate the number of vehicles that do not depart directly
+            valid_no_direct_departure_vehicles = torch.sum(action_probs_flat[:, 21:] != 0, dim=-1, dtype=torch.long)  # (batch_size * M,)
+            valid_no_direct_departure_vehicles = (valid_no_direct_departure_vehicles > 1).view(batch_size, M)  # (batch_size, M)
+            num_no_direct_departure = torch.sum(selected_actions[valid_no_direct_departure_vehicles] != 21, dtype=torch.long).item()
+            if num_no_direct_departure > 0:
+                print("Number of vehicles that do not depart directly: ", num_no_direct_departure)
         else:
             raise ValueError("Mode must be 'greedy' or 'sampling'")
 

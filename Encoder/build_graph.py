@@ -29,7 +29,7 @@ def find_k_dist_nodes(similarity_matrix, num_customers, num_wait_time_dummy_node
     return nearest_customers_indices+1, nearest_depots_indices+1
 
 
-def build_graph(df_customers, company_data, wait_times, k_distance_percent, k_time_percent):
+def build_graph(df_customers, company_data, wait_times, k_distance_percent, k_time_percent, node_features_only=False):
     depot = company_data['depot']
     num_customers = company_data['Num_Customers']
     k_distance = ceil(num_customers * k_distance_percent)
@@ -66,6 +66,14 @@ def build_graph(df_customers, company_data, wait_times, k_distance_percent, k_ti
     ].values
     node_features_tensor = torch.tensor(node_features, dtype=torch.float32)
 
+    # 构建欧几里得距离矩阵
+    # Build Euclidean distance matrix
+    positions = df_customers[['X', 'Y']].values
+    distance_matrix = cdist(positions, positions, metric='euclidean')
+
+    if node_features_only:
+        return node_features_tensor, distance_matrix
+
     # 构建图
     # Build graph
     g = dgl.graph(([], []))  # 创建一个空图 Create an empty graph
@@ -74,11 +82,6 @@ def build_graph(df_customers, company_data, wait_times, k_distance_percent, k_ti
     # Add nodes and node features
     g.add_nodes(node_features.shape[0])
     g.ndata['features'] = node_features_tensor
-
-    # 构建欧几里得距离矩阵
-    # Build Euclidean distance matrix
-    positions = df_customers[['X', 'Y']].values
-    distance_matrix = cdist(positions, positions, metric='euclidean')
 
     # 根据距离矩阵计算最近邻节点
     # Calculate the nearest neighbor nodes based on the distance matrix
@@ -91,6 +94,8 @@ def build_graph(df_customers, company_data, wait_times, k_distance_percent, k_ti
     start_time = df_customers['Start_Time_Window'].values
     end_time = df_customers['End_Time_Window'].values
     service_time = df_customers['Service_Time'].values
+    alpha = df_customers['Alpha'].values
+    beta = df_customers['Beta'].values
     earliest_service_time_matrix = start_time[:, None] + service_time[:, None] + distance_matrix
     latest_service_time_matrix = end_time[:, None] + service_time[:, None] + distance_matrix
 
@@ -103,7 +108,14 @@ def build_graph(df_customers, company_data, wait_times, k_distance_percent, k_ti
 
     # 构建时间相似度矩阵
     # Build time similarity matrix
-    time_similarity_matrix = np.abs(earliest_start_diff) + np.abs(latest_end_diff)
+    overlap_matrix = np.minimum(end_time[None, :], latest_service_time_matrix) - np.maximum(start_time[None, :], earliest_service_time_matrix)
+    overlap_matrix[overlap_matrix < 0] = 0
+    early_no_overlap = (start_time[None, :] - latest_service_time_matrix) * alpha[None, :]
+    early_no_overlap[early_no_overlap < 0] = 0
+    late_no_overlap = (earliest_service_time_matrix - end_time[None, :]) * beta[None, :]
+    late_no_overlap[late_no_overlap < 0] = 0
+    time_similarity_matrix = -(overlap_matrix - early_no_overlap - late_no_overlap)
+
     nearest_time_customer_to_customer, nearest_time_depot_to_customer = find_k_dist_nodes(
         time_similarity_matrix, num_customers, num_wait_time_dummy_node, k_time
     )
@@ -164,6 +176,7 @@ def build_graph(df_customers, company_data, wait_times, k_distance_percent, k_ti
     edge_latest_end_diff = latest_end_diff[src, dst]  # 最晚结束时间差 Latest end time difference
     edge_alpha = alpha_matrix[src, dst]  # Alpha 惩罚 Alpha penalty
     edge_beta = beta_matrix[src, dst]  # Beta 惩罚 Beta penalty
+    edge_similarity = time_similarity_matrix[src, dst]  # 时间相似度 Time similarity
 
     # 拼接所有边特征到三维矩阵中，确保它们的形状一致
     # Concatenate all edge features into a three-dimensional matrix to ensure that their shapes are consistent
@@ -177,7 +190,8 @@ def build_graph(df_customers, company_data, wait_times, k_distance_percent, k_ti
         edge_latest_end_diff,  # 最晚结束服务差异 Latest end service difference
         edge_alpha,  # Alpha惩罚 Alpha penalty
         edge_beta,  # Beta惩罚 Beta penalty
-        relative_polar_angle  # 边的极角 Polar angle of the edge
+        relative_polar_angle,  # 边的极角 Polar angle of the edge
+        edge_similarity  # 时间相似度 Time similarity
     ], axis=-1)
 
     # 转换为PyTorch张量

@@ -26,6 +26,11 @@ class Encoder(nn.Module):
         self.k_time_nearest_neighbors_percent = k_time_nearest_neighbors_percent
         self.device = device
 
+        if k_distance_nearest_neighbors_percent is None:
+            self.non_graph_encoder = True
+        else:
+            self.non_graph_encoder = False
+
         # 所有存储变量
         # Store all variables
         self.num_wait_time_dummy_node = None
@@ -39,35 +44,52 @@ class Encoder(nn.Module):
 
     def encode(self, batch_customer_data, batch_company_data, wait_times):
         batch_size = len(batch_customer_data)
-
-        self.num_wait_time_dummy_node = len(wait_times)
-        self.batch_graphs = []
         self.batch_node_features = []
-        self.batch_edge_features = []
         self.batch_distance_matrices = []
-        for i in range(batch_size):
-            customer_data = batch_customer_data[i]
-            company_data = batch_company_data[i]
-            g, node_features, edge_features, distance_matrix = build_graph(
-                customer_data, company_data, wait_times,
-                self.k_distance_nearest_neighbors_percent, self.k_time_nearest_neighbors_percent,
-            )
-            self.batch_node_features.append(node_features)
-            self.batch_edge_features.append(edge_features)
-            self.batch_distance_matrices.append(distance_matrix)
-            self.batch_graphs.append(g)
+        self.batch_num_nodes = []
+        self.num_wait_time_dummy_node = len(wait_times)
 
-        batch_graphs = dgl.batch(self.batch_graphs).to(self.device)
-        batch_encode_node_features = self.encoder(batch_graphs)  # (total_num_nodes, embedding_dims)
-        # 获取每个图的节点数量
-        # Get the number of nodes for each graph
-        self.batch_num_nodes = [g.number_of_nodes() for g in self.batch_graphs]
-        # 将节点特征重新拆分成每个图的特征
-        # Split the node features back into the features of each graph
-        self.batch_encode_node_features = torch.split(batch_encode_node_features, self.batch_num_nodes)
-        # 将分割后的特征拼接为形状为 (batch_size, num_nodes, embedding_dims)
-        # Concatenate the split features into shape (batch_size, num_nodes, embedding_dims)
-        self.batch_encode_node_features = torch.stack(self.batch_encode_node_features)
+        if self.non_graph_encoder:
+            for i in range(batch_size):
+                customer_data = batch_customer_data[i]
+                company_data = batch_company_data[i]
+                node_features, distance_matrix = build_graph(
+                    customer_data, company_data, wait_times, 0, 0,
+                    node_features_only=True
+                )
+                self.batch_node_features.append(node_features)
+                self.batch_distance_matrices.append(distance_matrix)
+                self.batch_num_nodes.append(node_features.size(0))
+
+            batch_node_features = torch.stack(self.batch_node_features).to(self.device)
+            self.batch_encode_node_features = self.encoder(batch_node_features)
+        else:
+            self.batch_graphs = []
+            self.batch_edge_features = []
+            for i in range(batch_size):
+                customer_data = batch_customer_data[i]
+                company_data = batch_company_data[i]
+                g, node_features, edge_features, distance_matrix = build_graph(
+                    customer_data, company_data, wait_times,
+                    self.k_distance_nearest_neighbors_percent, self.k_time_nearest_neighbors_percent,
+                )
+                self.batch_node_features.append(node_features)
+                self.batch_edge_features.append(edge_features)
+                self.batch_distance_matrices.append(distance_matrix)
+                self.batch_graphs.append(g)
+
+            batch_graphs = dgl.batch(self.batch_graphs).to(self.device)
+            batch_encode_node_features = self.encoder(batch_graphs)  # (total_num_nodes, embedding_dims)
+            # 获取每个图的节点数量
+            # Get the number of nodes for each graph
+            self.batch_num_nodes = [g.number_of_nodes() for g in self.batch_graphs]
+            # 将节点特征重新拆分成每个图的特征
+            # Split the node features back into the features of each graph
+            self.batch_encode_node_features = torch.split(batch_encode_node_features, self.batch_num_nodes)
+            # 将分割后的特征拼接为形状为 (batch_size, num_nodes, embedding_dims)
+            # Concatenate the split features into shape (batch_size, num_nodes, embedding_dims)
+            self.batch_encode_node_features = torch.stack(self.batch_encode_node_features)
+
         # 计算全局embedding (batch_size, embedding_dims)
         # Calculate global embedding (batch_size, embedding_dims)
         self.batch_global_embedding = torch.mean(self.batch_encode_node_features, dim=1)
@@ -80,7 +102,7 @@ class Encoder(nn.Module):
             batch_customer_max_time,
             batch_customer_remaining_demands,
             include_global=True,
-            include_remaining_demands=True
+            include_remaining_demands=True,
     ):
         """
         获取batch中所有instances的所有车辆和客户的当前状态

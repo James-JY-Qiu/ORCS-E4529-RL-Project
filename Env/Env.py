@@ -201,16 +201,6 @@ class VRPEnv:
             valid_customers = [0]
         else:
             valid_customers = []
-            # 如果其他车辆容量足够服务剩下的客户，并且自身容量不足10%，则可以选择返回depot
-            # If the remaining capacity of other vehicles is sufficient to serve the remaining customers, and the capacity of the vehicle itself is less than 10%, it can choose to return to the depot
-            if self.remaining_capacities[vehicle_id] < self.vehicle_capacity * 0.1:
-                total_remaining_demands = self.current_customer_demands[1:].sum()
-                total_other_active_vehicles_capacities = sum(
-                    [self.remaining_capacities[v] for v in range(self.vehicle_count)
-                     if not self.finished_vehicle[v] and v != vehicle_id]
-                )
-                if total_remaining_demands <= total_other_active_vehicles_capacities:
-                    valid_customers.append(0)
             for customer_id in range(1, self.num_customers + 1):
                 if self.finished_customers[customer_id]:
                     continue

@@ -33,7 +33,7 @@ small_params = {
     'time_window_length': -1,
     'early_penalty_alpha_range': (0.,0.2),
     'late_penalty_beta_range': (0.,1.),
-    'wait_times':  np.linspace(0, 1.5, 10),
+    'wait_times':  np.linspace(0., 1., 5),
     'demand_unmet_penalty': 100,
     'index': 0
 }

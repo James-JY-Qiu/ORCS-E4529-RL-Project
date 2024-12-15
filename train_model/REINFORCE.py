@@ -11,7 +11,7 @@ from tqdm.auto import tqdm
 import copy
 from datetime import datetime
 
-from Encoder import Encoder, MultiLayerEdgeGAT
+from Encoder import Encoder, MultiLayerEdgeGAT, TransformerEncoder
 from Env import BatchVRPEnvs
 from Action import ActionSelector
 
@@ -28,12 +28,13 @@ import traceback
 
 # --------------------- Hyperparameters ---------------------
 # --------- encoder -----------
+node_feats = 11
+out_feats = 128
 
 # MultiLayerEdge
-out_feats = 128
 MultiLayerEdgeGATParams = {
-    'in_feats': 11,
-    'edge_feats': 10,
+    'in_feats': node_feats,
+    'edge_feats': 11,
     'units': 128,
     'num_heads': 8,
     'num_layers': 2,
@@ -43,6 +44,15 @@ MultiLayerEdgeGATParams = {
     'activation': F.leaky_relu
 }
 embedding_dim = out_feats
+
+# TransformerEncoder
+TransformerEncoderParams = {
+    'in_features': node_feats,
+    'out_features': out_feats,
+    'num_heads': 8,
+    'num_layers': 3
+}
+
 # --------- decoder -----------
 
 # action
@@ -310,6 +320,15 @@ if __name__ == '__main__':
         device=device
     )
     encoder.to(device)
+
+    # encoder = Encoder(
+    #     encoder_model=TransformerEncoder,
+    #     encoder_params=TransformerEncoderParams,
+    #     k_distance_nearest_neighbors_percent=None,
+    #     k_time_nearest_neighbors_percent=None,
+    #     device=device
+    # )
+    # encoder.to(device)
 
     # baseline encoder
     baseline_encoder = copy.deepcopy(encoder)
